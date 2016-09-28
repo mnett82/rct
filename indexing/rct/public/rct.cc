@@ -1,5 +1,7 @@
 #include "indexing/rct/public/rct.h"
 
+#include <glog/logging.h>
+
 namespace indexing {
 namespace rct {
 
@@ -205,15 +207,15 @@ int RCT::build(DistData** inputData, const int& numItems, const float& scaleFact
     if ((numItems <= 0) || (inputData == NULL)) {
         if (verbosity > 0) {
             if (numItems == 1) {
-                cerr << "ERROR (from build): data set has only 1 item." << endl;
+              LOG(ERROR) << "Data set has only 1 item.";
             } else {
-                cerr << "ERROR (from build): empty data set." << endl;
+              LOG(ERROR) << "Empty data set.";
             }
         }
         return 0;
     }
     if (verbosity >= 2) {
-        cout << "Building RCT from data array..." << endl;
+      LOG(INFO) << "Building RCT from data array...";
     }
 
     data = inputData;
@@ -282,10 +284,9 @@ int RCT::build(const char* fileName, DistData** inputData, const int& numItems) 
     if ((fileName == NULL) || (numItems <= 0) || (inputData == NULL)) {
         if (verbosity > 0) {
             if (numItems == 1) {
-                cerr << "ERROR (from build): data set has only 1 item." << endl;
+              LOG(ERROR) << "Data set has only 1 item.";
             } else {
-                cerr << "ERROR (from build): empty data set or filename.";
-                cerr << endl;
+              LOG(ERROR) << "Empty data set or filename.";
             }
 
         }
@@ -293,7 +294,7 @@ int RCT::build(const char* fileName, DistData** inputData, const int& numItems) 
     }
 
     if (verbosity >= 2) {
-        cout << "Loading RCT from file '" << fileName << ".rctf' ..." << endl;
+      LOG(INFO) << "Loading RCT from file '" << fileName << ".rctf'...";
     }
     data = inputData;
 
@@ -303,8 +304,7 @@ int RCT::build(const char* fileName, DistData** inputData, const int& numItems) 
     inFile.open(fullFileName.str().c_str(), ios::in);
     if (!inFile.is_open()) {
         if (verbosity > 0) {
-            cerr << "ERROR (from build): file '" << fullFileName.str();
-            cerr << "' could not be opened." << endl;
+          LOG(ERROR) << "File '" << fullFileName.str() << "' could not be opened.";
         }
         return 0;
     }
@@ -324,8 +324,7 @@ int RCT::build(const char* fileName, DistData** inputData, const int& numItems) 
     // Are these parameter values what we expected? If not, then abort!
     if (inSize != numItems) {
         if (verbosity > 0) {
-            cerr << "ERROR (from build): unexpected RCT parameters in file";
-            cerr << " '" << fullFileName.str() << "'." << endl;
+          LOG(ERROR) << "Unexpected RCT parameters in file '" << fullFileName.str() << "'.";
         }
         inFile.close();
         return 0;
@@ -372,8 +371,7 @@ int RCT::build(const char* fileName, DistData** inputData, const int& numItems) 
             inFile >> inLevel >> loc;
             if ((loc != i) || (lvl != inLevel)) {
                 if (verbosity > 0) {
-                    cerr << "ERROR (from build): invalid entry in file '";
-                    cerr << fileName << ".rctf'." << endl;
+                    LOG(ERROR) << "Invalid entry in file '" << fileName << ".rctf'.";
                 }
                 inFile.close();
                 return 0;
@@ -424,7 +422,7 @@ int RCT::findAllInRange(DistData* query, const float& limit, const int& sampleLe
             || (sampleLevel < 0)
             || ((sampleLevel >= levels) && (size > 1))) {
         if (verbosity > 0) {
-            cerr << "ERROR (from findAllInRange): invalid argument(s)." << endl;
+          LOG(ERROR) << "Invalid argument(s).";
         }
         return 0;
     }
@@ -464,7 +462,7 @@ int RCT::findMostInRange(DistData* query, const float& limit, const float& scale
             || ((sampleLevel >= levels) && (size > 1))
             || (scaleFactor <= 0.0F)) {
         if (verbosity > 0) {
-            cerr << "ERROR (from findMostInRange): invalid argument(s)." << endl;
+            LOG(ERROR) << "Invalid argument(s).";
         }
         return 0;
     }
@@ -505,7 +503,7 @@ int RCT::findNear(DistData* query, const int& howMany, const float& scaleFactor,
             || ((sampleLevel >= levels) && (size > 1))
             || (scaleFactor <= 0.0F)) {
         if (verbosity > 0) {
-            cerr << "ERROR (from findNear): invalid argument(s)." << endl;
+            LOG(ERROR) << "Invalid argument(s).";
         }
         return 0;
     }
@@ -543,7 +541,7 @@ int RCT::findNearest(DistData* query, const int& howMany, const int& sampleLevel
             || (sampleLevel < 0)
             || ((sampleLevel >= levels) && (size > 1))) {
         if (verbosity > 0) {
-            cerr << "ERROR (from findNearest): invalid argument(s)." << endl;
+            LOG(ERROR) << "Invalid argument(s).";
         }
         return 0;
     }
@@ -610,8 +608,7 @@ int RCT::getExternToInternMapping(int* result, int capacity) const {
     int i;
     if ((result == NULL) || (capacity < size)) {
         if (verbosity > 0) {
-            cerr << "ERROR (from getExternToInternMapping): result list ";
-            cerr << "capacity is too small." << endl;
+            LOG(ERROR) << "Result list capacity is too small.";
         }
         return 0;
     }
@@ -635,8 +632,7 @@ int RCT::getInternToExternMapping(int* result, int capacity) const {
     int i;
     if ((result == NULL) || (capacity < size)) {
         if (verbosity > 0) {
-            cerr << "ERROR (from getInternToExternMapping): result list ";
-            cerr << "capacity is too small." << endl;
+            LOG(ERROR) << "Result list capacity is too small.";
         }
         return 0;
     }
@@ -661,8 +657,7 @@ int RCT::getLevelSetSizes(int* result, int capacity) const {
     int lvl;
     if ((result == NULL) || (capacity < levels)) {
         if (verbosity > 0) {
-            cerr << "ERROR (from getLevelSetSizes): result list capacity is ";
-            cerr << "too small." << endl;
+            LOG(ERROR) << "Result list capacity is too small.";
         }
         return 0;
     }
@@ -696,8 +691,7 @@ int RCT::getMaxLevelAssignment(int* result, int capacity) const {
     int lvl;
     if ((result == NULL) || (capacity < size)) {
         if (verbosity > 0) {
-            cerr << "ERROR (from getMaxLevelAssignment): result list capacity ";
-            cerr << "is too small." << endl;
+            LOG(ERROR) << "Result list capacity is too small.";
         }
         return 0;
     }
@@ -772,8 +766,7 @@ float RCT::getResultAcc(float* exactDistList, int howMany) const {
     int loc = 0;
     if ((exactDistList == NULL) || (howMany < queryResultSize)) {
         if (verbosity > 0) {
-            cerr << "ERROR (from getResultAcc): exact distance list is too ";
-            cerr << "small." << endl;
+            LOG(ERROR) << "Exact distance list is too small.";
         }
         return RCT_UNKNOWN_;
     }
@@ -800,8 +793,7 @@ int RCT::getResultDists(float* result, int capacity) const {
     int i;
     if ((result == NULL) || (capacity < queryResultSize)) {
         if (verbosity > 0) {
-            cerr << "ERROR (from getResultDists): result list capacity is too ";
-            cerr << "small." << endl;
+            LOG(ERROR) << "Result list capacity is too small.";
         }
         return 0;
     }
@@ -835,8 +827,7 @@ int RCT::getResultIndices(int* result, int capacity) const {
     int i;
     if ((result == NULL) || (capacity < queryResultSize)) {
         if (verbosity > 0) {
-            cerr << "ERROR (from getResultIndices): result list capacity is ";
-            cerr << "too small." << endl;
+            LOG(ERROR) << "Result list capacity is too small.";
         }
         return 0;
     }
@@ -907,7 +898,7 @@ int RCT::saveToFile(const char* fileName) const {
     // If this fails, then abort.
     if (fileName == NULL) {
         if (verbosity > 0) {
-            cerr << "ERROR (from saveToFile): output file name is NULL." << endl;
+            LOG(ERROR) << "Output file name is NULL.";
         }
         return 0;
     }
@@ -920,8 +911,7 @@ int RCT::saveToFile(const char* fileName) const {
     outFile.open(fullFileName.str().c_str(), ios::out);
     if (!outFile.is_open()) {
         if (verbosity > 0) {
-            cerr << "ERROR (from saveToFile): file '" << fullFileName.str();
-            cerr << "' could not be opened." << endl;
+            LOG(ERROR) << "File '" << fullFileName.str() << "' could not be opened.";
         }
         return 0;
     }
@@ -1178,7 +1168,7 @@ void RCT::doBuild() {
 
         // The RCT has grown by one level.
         if (verbosity >= 2) {
-					cout << "RCT level " << lvl << " constructed." << endl;
+          LOG(INFO) << "RCT level " << lvl << " constructed.";
         }
     }
 
@@ -1917,16 +1907,15 @@ int RCT::partialQuickSort(int howMany, float* distList, int* indexList, int rang
  * @note Should only be called immediately after the construction!
  */
 void RCT::printStats() const {
-    cout << endl << "RCT build statistics:" << endl;
-    cout << "  size                   == " << size << endl;
-    cout << "  levels                 == " << levels << endl;
-    cout << "  total nodes            == " << numNodes << endl;
-    cout << "  max parents per node   == " << maxParents << endl;
-    cout << "  max node degree        == " << maxDegree << endl;
-    cout << "  avg node degree        == " << avgDegree << endl;
-    cout << "  distance comparisons   == " << numDistComps << endl;
-    cout << "  RNG seed               == " << seed << endl;
-    cout << endl;
+    LOG(INFO) << "RCT build statistics:";
+    LOG(INFO) << "  size                   == " << size;
+    LOG(INFO) << "  levels                 == " << levels;
+    LOG(INFO) << "  total nodes            == " << numNodes;
+    LOG(INFO) << "  max parents per node   == " << maxParents;
+    LOG(INFO) << "  max node degree        == " << maxDegree;
+    LOG(INFO) << "  avg node degree        == " << avgDegree;
+    LOG(INFO) << "  distance comparisons   == " << numDistComps;
+    LOG(INFO) << "  RNG seed               == " << seed;
 }
 
 /*!
@@ -2405,7 +2394,6 @@ double RCT::getFractionOfWellformedEdges() {
     }
 
     // How many edges do we have in the RCT?
-    cout << wellFormedEdges << "/" << edgesChecked << endl;
     return static_cast<double>(wellFormedEdges) / static_cast<double>(edgesChecked);
 }
 
