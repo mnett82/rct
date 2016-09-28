@@ -151,8 +151,8 @@
  * \endcode
  */
 
-#ifndef __RCT_H
-#define __RCT_H
+#ifndef INDEXING_RCT_RCT_H_
+#define INDEXING_RCT_RCT_H_
 
 #include <iostream>
 #include <sstream>
@@ -185,6 +185,9 @@ using namespace std;
 #endif
 
 #include "indexing/rct/public/random.h"
+
+namespace indexing {
+namespace rct {
 
 /*!
  * @class   RCT
@@ -641,4 +644,7 @@ protected:
 
 };
 
-#endif /* __RCT_H */
+}  // namespace rct
+}  // namespace indexing
+
+#endif  // INDEXING_RCT_RCT_H_

@@ -1,5 +1,8 @@
 #include "indexing/rct/public/rct.h"
 
+namespace indexing {
+namespace rct {
+
 /*!
  * Sets the sample rate.
  *
@@ -2405,3 +2408,6 @@ double RCT::getFractionOfWellformedEdges() {
     cout << wellFormedEdges << "/" << edgesChecked << endl;
     return static_cast<double>(wellFormedEdges) / static_cast<double>(edgesChecked);
 }
+
+}  // namespace rct
+}  // namespace indexing

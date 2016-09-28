@@ -1,5 +1,8 @@
 #include "indexing/rct/public/random.h"
 
+namespace indexing {
+namespace rct {
+
 int		Random::p		= 0;
 bool            Random::init	= false;
 unsigned long	Random::state[Random::n];
@@ -81,3 +84,6 @@ Random& Random::seed(const unsigned long* array, const unsigned long& size) {
     p = n;
     return *this;
 }
+
+}  // namespace rct
+}  // namespace indexing

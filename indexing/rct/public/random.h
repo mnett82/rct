@@ -1,5 +1,8 @@
-#ifndef __MTRAND_H
-#define __MTRAND_H
+#ifndef INDEXING_RCT_RANDOM_H_
+#define INDEXING_RCT_RANDOM_H_
+
+namespace indexing {
+namespace rct {
 
 class Random {
 
@@ -63,4 +66,7 @@ public:
 
 } /* .. */;
 
-#endif /* __MTRAND_H */
+}  // namespace rct
+}  // namespace indexing
+
+#endif  // INDEXING_RCT_RANDOM_H_

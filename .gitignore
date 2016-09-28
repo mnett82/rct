@@ -27,3 +27,6 @@
 *.exe
 *.out
 *.app
+
+# Intermediary Bazel directories
+bazel-*
