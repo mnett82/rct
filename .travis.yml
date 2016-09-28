@@ -1,0 +1,9 @@
+dist: trusty
+
+addons:
+  apt:
+    packages:
+       - bazel
+
+script:
+  - bazel build //indexing/rct/...
