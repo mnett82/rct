@@ -31,4 +31,7 @@ cc_library(
         ":dist_data",
         ":random",  # TODO: this dependency needs to go.
     ],
+    linkopts = [
+        "-lglog",
+    ],
 )
