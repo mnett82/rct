@@ -1,5 +1,6 @@
 #include "indexing/rct/public/rct.h"
 
+#include <random>
 #include <glog/logging.h>
 
 namespace indexing {
@@ -19,7 +20,7 @@ void RCT::setSampleRate(const float& sampleRate) {
 /*!
  * Constructor using seed for random number generator initialization.
  */
-RCT::RCT(const unsigned long& seed) {
+RCT::RCT(const unsigned long& seed) : seed(seed) {
   data = NULL;
   size = 0;
   maxParents = 1;
@@ -51,8 +52,7 @@ RCT::RCT(const unsigned long& seed) {
   coverageParameter = 1.0f;
   sampleRate = 2.0f;
   buildScaleFactor = RCT_UNKNOWN_;
-  rand.seed(seed);
-  (*this).seed = seed;
+  rand_.seed(seed);
 }
 
 /*!
@@ -234,7 +234,8 @@ int RCT::build(DistData** inputData, const int& numItems,
     internToExternMapping[i] = i;
   }
   for (i = size - 1; i >= 0; i--) {
-    loc = rand.integer() % (i + 1);
+    std::uniform_int_distribution<size_t> distribution(0, i);
+    loc = distribution(rand_);
     temp = internToExternMapping[loc];
     internToExternMapping[loc] = internToExternMapping[i];
     internToExternMapping[i] = temp;
@@ -1508,8 +1509,10 @@ int RCT::partialQuickSort(int howMany, float* distList, int* indexList,
   // If the range to be sorted is small, just do an insertion sort.
 
   if (rangeLast - rangeFirst < 7) {
+    std::uniform_int_distribution<size_t> distribution(0,
+                                                       rangeLast - rangeFirst);
     high = rangeFirst + 1;
-    tieBreakIndex = indexList[rand.integer() % (rangeLast - rangeFirst + 1)];
+    tieBreakIndex = indexList[distribution(rand_)];
 
     // The outer while loop considers each item in turn (starting
     //   with the second item in the range), for insertion into
@@ -1633,8 +1636,9 @@ int RCT::partialQuickSort(int howMany, float* distList, int* indexList,
   // Select a pivot item, and swap it with the item at the beginning
   //   of the range.
 
-  pivotLoc = rangeFirst + (rand.integer() % (rangeLast - rangeFirst + 1));
-  tieBreakIndex = indexList[rand.integer() % (rangeLast - rangeFirst + 1)];
+  std::uniform_int_distribution<size_t> distribution(0, rangeLast - rangeFirst);
+  pivotLoc = rangeFirst + distribution(rand_);
+  tieBreakIndex = indexList[distribution(rand_)];
 
   pivotDist = distList[pivotLoc];
   distList[pivotLoc] = distList[rangeFirst];
@@ -1844,8 +1848,10 @@ void RCT::quickSort(float* distList, int* indexList, int rangeFirst,
   // If the range to be sorted is small, just do an insertion sort.
 
   if (rangeLast - rangeFirst < 7) {
+    std::uniform_int_distribution<size_t> distribution(0,
+                                                       rangeLast - rangeFirst);
     high = rangeFirst + 1;
-    tieBreakDist = distList[rand.integer() % (rangeLast - rangeFirst + 1)];
+    tieBreakDist = distList[distribution(rand_)];
 
     // The outer while loop considers each item in turn (starting
     //   with the second item in the range), for insertion into
@@ -1922,8 +1928,9 @@ void RCT::quickSort(float* distList, int* indexList, int rangeFirst,
   // Select a pivot item, and swap it with the item at the beginning
   //   of the range.
 
-  pivotLoc = rangeFirst + (rand.integer() % (rangeLast - rangeFirst + 1));
-  tieBreakDist = distList[rand.integer() % (rangeLast - rangeFirst + 1)];
+  std::uniform_int_distribution<size_t> distribution(0, rangeLast - rangeFirst);
+  pivotLoc = rangeFirst + distribution(rand_);
+  tieBreakDist = distList[distribution(rand_)];
 
   pivotDist = distList[pivotLoc];
   distList[pivotLoc] = distList[rangeFirst];
@@ -2128,8 +2135,9 @@ void RCT::setupLevels(int numItems, int numParents) {
     float p = 1.0f / sampleRate;
 
     for (i = 0; i < size; ++i) {
+      static std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
       maxLevelList[i] = 0;
-      while (rand() <= p) {
+      while (distribution(rand_) <= p) {
         ++maxLevelList[i];
       }
       if (maxLevelList[i] >= levels) {

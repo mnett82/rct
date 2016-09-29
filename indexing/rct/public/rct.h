@@ -36,8 +36,6 @@
  * -# DistData.h
  * -# rct.h
  * -# rct.cpp
- * -# random.h
- * -# random.cpp
  *
  * <hr />
  *
@@ -161,11 +159,11 @@
 #ifndef INDEXING_RCT_RCT_H_
 #define INDEXING_RCT_RCT_H_
 
+#include <cassert>
 #include <fstream>
 #include <iostream>
+#include <random>
 #include <sstream>
-
-#include <cassert>
 
 #include "indexing/rct/public/dist_data.h"
 
@@ -190,8 +188,6 @@ using namespace std;
 #ifndef RCT_VERSION_
 #define RCT_VERSION_ ("1.0")
 #endif
-
-#include "indexing/rct/public/random.h"
 
 namespace indexing {
 namespace rct {
@@ -264,7 +260,7 @@ class RCT {
    * timestamp obtained from <code>::time(0)</code> unless the user
    * supplies a specific seed when calling <code>build(...)</code>.
    */
-  Random rand;
+  std::mt19937_64 rand_;
 
   //! Sample rate.
   /*!
