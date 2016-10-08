@@ -13,231 +13,23 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-/*!
- * @mainpage Rank Cover Tree Library
- *
- * @section intro Introduction
- *
- * This package provides a C++ implementation of the rank cover tree (see [1]),
- * a probabilistic algorithm for finding k-nearest neighbors of point sets in
- * general metric spaces. The rank cover tree reinterprets the cover set
- * analysis of the cover tree search structure in terms of neighbor ranks as
- * measured from the query point, rather than explicit distances. The direct
- * analysis results in a construction and query time complexity with a far
- * smaller dependence on the measure of implicit dimension used in the cover
- * tree analysis. The rank cover tree can also be viewed as a variant of the
- * generic, scalable SASH heuristic for similarity search, where the rank
- * cover tree parameter governing the execution have been set to a value
- * insufficiently large to guarantee correctness with high probability. In this
- * sense, this implementation and its paper constitute the first formal
- * analysis of the accuracy of the SASH.
- *
- * This source package provides the following files:
- * -# DistData.h
- * -# rct.h
- * -# rct.cpp
- *
- * <hr />
- *
- * @section notes Release Notes
- *
- * If you like to use or extend this package, please be aware of any material
- * available on <a href="http://tcs.rwth-aachen.de/~nett/">this website</a>.
- *
- * <hr />
- *
- * @section disclaimer Disclaimer
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * 1. The source code and derived binary forms may be used only for
- *    non-commercial, non-profit research purposes.
- *
- * 2. Redistributions of source code must retain the above copyright
- *    notice, these conditions, and the following disclaimer.
- *
- * 3. Redistributions in binary form must reproduce the above copyright
- *    notice, these conditions, and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * 4. The names of its contributors may not be used to endorse or promote
- *    products derived from this software without specific prior written
- *    permission.
- *
- * <em>This software is provided by the copyright holders and contributors
- * "as is" and any express or implied warranties, including, but not limited
- * to, the implied warranties of merchantability and fitness for a particular
- * purpose are disclaimed. In no event shall the copyright owner or
- * contributors be liable for any direct, indirect, incidental, special,
- * exemplary, or consequential damages (including, but not limited to,
- * procurement of substitute goods or services; loss of use, data, or
- * profits; or business interruption) however caused and on any theory of
- * liability, whether in contract, strict liability, or tort (including
- * negligence or otherwise) arising in any way out of the use of this software,
- * even if advised of the possibility of such damage.</em>
- *
- * Comments, bug fixes, etc welcome!
- * Contact e-mail addresses: meh@nii.ac.jp, meh@acm.org,
- * michael.nett@rwth-aachen.de
- *
- * <hr />
- *
- * @section usage Example of usage
- *
- * <em>The following examples assume that the array <code>DistData** data</code>
- * contains
- * (at least) <code>size</code> data items.</em>
- *
- * In order to create an empty RCT use the following code.
- *
- * \code
- * RCT* rct = new RCT();
- * \endcode
- *
- * Alternatively, a specific seed value for the random number generator can be
- * passed as an argument to the constructor:
- *
- * \code
- * RCT* rct = new RCT(time(0));
- * \endcode
- *
- * After creation of an RCT, the verbosity level can be set (here we want all
- * error
- * and progress messages):
- *
- * \code
- * rct->setVerbosity(2);
- * \endcode
- *
- * You might want to use a coverage parameter other than the default
- * (<em>1.0</em>),
- * depending on the intrinsic dimension of your dataset. The coverage parameter
- * is
- * changed using the following method:
- *
- * \code
- * rct->setCoverageParameter(8.0);
- * \endcode
- *
- * In addition, the sample rate (which has the default value of <em>2.0</em>)
- * can be
- * changed. To generate an RCT with an expected number of levels of <em>3</em>,
- * we
- * use the following setting:
- *
- * \code
- * rct->setSampleRate(pow(size, 1.0 / 3.0));
- * \endcode
- *
- * Now the RCT can be constructed by calling
- *
- * \code
- * rct->build(data, size);
- * \endcode
- *
- * After the construction finishes we can find approximate <em>k</em>
- * nearest-neighbors to a query object <code>DistData* query</code> by
- * calling:
- *
- * \code
- * int num = rct->findNear(query, k);
- * \endcode
- *
- * In the following we can access the indices and query-to-item distances
- * of the query results.
- *
- * \code
- * int* indices = new int [num];
- * rct->getResultIndices(indices, num);
- * float* distances = new float [num];
- * rct->getResultDists(distances, num);
- * \endcode
- */
+#ifndef INDEXING_RCT_PUBLIC_RCT_H_
+#define INDEXING_RCT_PUBLIC_RCT_H_
 
-#ifndef INDEXING_RCT_RCT_H_
-#define INDEXING_RCT_RCT_H_
-
-#include <cassert>
-#include <fstream>
-#include <iostream>
 #include <random>
-#include <sstream>
 
-#include "indexing/rct/public/dist_data.h"
-
-using namespace std;
-
-#ifndef RCT_NONE_
-#define RCT_NONE_ (-1)
+#ifdef _RCT_TMPL_DECL
+#error "Macro '_RCT_TMPL_DECL' already defined!"
 #endif
-
-#ifndef RCT_UNDEFINED_
-#define RCT_UNDEFINED_ (-1)
-#endif
-
-#ifndef RCT_UNKNOWN_
-#define RCT_UNKNOWN_ (-1.0F)
-#endif
-
-#ifndef RCT_BUFSIZE_
-#define RCT_BUFSIZE_ (1024)
-#endif
-
-#ifndef RCT_VERSION_
-#define RCT_VERSION_ ("1.0")
-#endif
+#define _RCT_TMPL_DECL                                         \
+  template <typename DomainType, typename DistanceType,        \
+            DistanceType (*ComputeDistance)(const DomainType&, \
+                                            const DomainType&)>
 
 namespace indexing {
 namespace rct {
 
-/*!
- * @class   RCT
- * @author  Michael E. Houle, Michael Nett
- * @date    05/25/2010
- * @version 1.0
- *
- * Implementation of probabilistically-correct index for
- * similarity search.
- *
- * <em>&copy; 2006-2010 Michael E. Houle &mdash; All rights reserved.</em>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * -# The source code and derived binary forms may be used only for
- *    non-commercial, non-profit research purposes.
- * -# Redistributions of source code must retain the above copyright
- *    notice, these conditions, and the following disclaimer.
- * -# Redistributions in binary form must reproduce the above copyright
- *    notice, these conditions, and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * -# The names of its contributors may not be used to endorse or promote
- *    products derived from this software without specific prior written
- *    permission.
- *
- * <em>This software is provided by the copyright holders and contributors
- * "as is" and any express or implied warranties, including, but not limited
- * to, the implied warranties of merchantability and fitness for a particular
- * purpose are disclaimed. In no event shall the copyright owner or
- * contributors be liable for any direct, indirect, incidental, special,
- * exemplary, or consequential damages (including, but not limited to,
- * procurement of substitute goods or services; loss of use, data, or
- * profits; or business interruption) however caused and on any theory of
- * liability, whether in contract, strict liability, or tort (including
- * negligence or otherwise) arising in any way out of the use of this software,
- * even if advised of the possibility of such damage.</em>
- *
- * <b>Comments, bug fixes, etc welcome!</b>
- *
- * Contact e-mail address: meh@nii.ac.jp, meh@acm.org,
- * michael.nett@rwth-aachen.de
- */
-//! Rank Cover Tree for probabilistically-correct similarity search.
-
-class RCT {
+_RCT_TMPL_DECL class RCT {
  private:
   //! The truth value 'true'.
   static const int TRUE = 1;
@@ -252,7 +44,7 @@ class RCT {
    * memory allocated for the input data and the memory must not be
    * released while the RCT is in use.
    */
-  DistData** data;
+  DomainType** data;
 
   //! Pseudo random number generator.
   /*!
@@ -382,7 +174,7 @@ class RCT {
    * processed) query. This marker is also used to identify repeated queries
    * where computation time can be saved.
    */
-  DistData* query;
+  DomainType* query;
 
   //! Distance cache.
   /*!
@@ -518,27 +310,18 @@ class RCT {
   void setSampleRate(const float& sampleRate);
 
   //! Constructs an RCT from an array of data items.
-  int build(DistData** inputData, const int& numItems,
+  int build(DomainType** inputData, const int& numItems,
             const float& scaleFactor = 1.0f, const int& numParents = 1);
 
   //! Loads a previously-saved RCT from a file.
-  int build(const char* fileName, DistData** inputData, const int& numItems);
-
-  //! Perform an exact range query.
-  int findAllInRange(DistData* query, const float& limit,
-                     const int& sampleLevel = 0);
-
-  //! Perform an approximate range query.
-  int findMostInRange(DistData* query, const float& limit,
-                      const float& scaleFactor = 1.0f,
-                      const int& sampleLevel = 0);
+  int build(const char* fileName, DomainType** inputData, const int& numItems);
 
   //! Perform an approximate nearest-neighbor query.
-  int findNear(DistData* query, const int& howMany = 1,
+  int findNear(DomainType* query, const int& howMany = 1,
                const float& scaleFactor = 1.0f, const int& sampleLevel = 0);
 
   //! Perform an exact nearest-neighbor query.
-  int findNearest(DistData* query, const int& howMany = 1,
+  int findNearest(DomainType* query, const int& howMany = 1,
                   const int& sampleLevel = 0);
 
   //! Retrieve the average node degree.
@@ -551,7 +334,7 @@ class RCT {
   float getCoverageParameter() const;
 
   //! Retrieve the data items.
-  DistData** getData();
+  DomainType** getData();
 
   //! Retrieve a mapping from external to internal item indices.
   int getExternToInternMapping(int* result, int capacity) const;
@@ -647,7 +430,7 @@ class RCT {
   void reserveStorage();
 
   //! Accept a new query item.
-  void setNewQuery(DistData* query);
+  void setNewQuery(DomainType* query);
 
   //! Setup random leveling.
   void setupLevels(int numItems, int numParents);
@@ -656,4 +439,8 @@ class RCT {
 }  // namespace rct
 }  // namespace indexing
 
-#endif  // INDEXING_RCT_RCT_H_
+#include "indexing/rct/public/rct-inl.h"
+
+#undef _RCT_TMPL_DECL
+
+#endif  // INDEXING_RCT_PUBLIC_RCT_H_

@@ -6,6 +6,9 @@ cc_binary(
     name = "sample",
     srcs = ["sample.cc"],
     deps = [
-        "//indexing/rct/public",
+        "//indexing/rct/public:dense_vec_data",
+    ],
+    linkopts = [
+        "-lglog",
     ],
 )

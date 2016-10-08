@@ -3,26 +3,14 @@ package(
 )
 
 cc_library(
-    name = "public",
-    deps = [
-        ":dist_data",
-        ":rct",
-    ],
+    name = "dense_feature_vector",
+    hdrs = ["dense_feature_vector.h"],
 )
 
 cc_library(
-    name = "dist_data",
-    hdrs = ["dist_data.h"],
-)
-
-cc_library(
-    name = "rct",
-    srcs = ["rct.cc"],
-    hdrs = ["rct.h"],
+    name = "metrics",
+    hdrs = ["metrics.h"],
     deps = [
-        ":dist_data",
-    ],
-    linkopts = [
-        "-lglog",
+        ":dense_feature_vector",
     ],
 )

@@ -1,7 +1,31 @@
 #include "indexing/rct/public/rct.h"
 
-#include <random>
+#include <cassert>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+
 #include <glog/logging.h>
+
+#ifndef RCT_NONE_
+#define RCT_NONE_ (-1)
+#endif
+
+#ifndef RCT_UNDEFINED_
+#define RCT_UNDEFINED_ (-1)
+#endif
+
+#ifndef RCT_UNKNOWN_
+#define RCT_UNKNOWN_ (-1.0F)
+#endif
+
+#ifndef RCT_BUFSIZE_
+#define RCT_BUFSIZE_ (1024)
+#endif
+
+#ifndef RCT_VERSION_
+#define RCT_VERSION_ ("1.0")
+#endif
 
 namespace indexing {
 namespace rct {
@@ -13,6 +37,7 @@ namespace rct {
  *
  * @param sampleRate The desired sample rate.
  */
+_RCT_TMPL_DECL
 void RCT::setSampleRate(const float& sampleRate) {
   (*this).sampleRate = sampleRate;
 }
@@ -20,6 +45,7 @@ void RCT::setSampleRate(const float& sampleRate) {
 /*!
  * Constructor using seed for random number generator initialization.
  */
+_RCT_TMPL_DECL
 RCT::RCT(const unsigned long& seed) : seed(seed) {
   data = NULL;
   size = 0;
@@ -59,6 +85,7 @@ RCT::RCT(const unsigned long& seed) : seed(seed) {
  * The destructor releases memory allocated by the RCT prior to its
  * destruction.
  */
+_RCT_TMPL_DECL
 RCT::~RCT() {
   int i;
   int lvl;
@@ -198,6 +225,7 @@ RCT::~RCT() {
  * @param nunParents The maximum number of parents allowed per node.
  * @return The number of items in the constructed RCT.
  */
+_RCT_TMPL_DECL
 int RCT::build(DistData** inputData, const int& numItems,
                const float& scaleFactor, const int& numParents) {
   int i = 0;
@@ -262,6 +290,7 @@ int RCT::build(DistData** inputData, const int& numItems,
  * @return If successful, the number of RCT items is returned. Otherwise, zero
  *         is returned.
  */
+_RCT_TMPL_DECL
 int RCT::build(const char* fileName, DistData** inputData,
                const int& numItems) {
   int i = 0;
@@ -397,78 +426,6 @@ int RCT::build(const char* fileName, DistData** inputData,
 }
 
 /*!
- * Perform an exact range query for the specified item. The upper limit on the
- * query-to-item distance must be supplied. The search is relative to the
- * random level <em>sampleLevel</em> (default is <em>0</em>, i.e. the complete
- * data set).
- *
- * @param query The query location.
- * @param limit The range limit.
- * @param sampleLevel The sample level with respect to which the query is
- *                    performed.
- *
- * @return The number of elements actually found.
- *
- * @note The query result can be obtained via calls to the following methods:
- *       <code>getResultAcc</code>, <code>getResultDists</code>,
- *       <code>getResultDistComps</code>, <code>getResultIndices</code> and
- *       <code>getResultNumFound</code>. The result items are sorted in
- *       increasing order of their distances to the query.
- */
-int RCT::findAllInRange(DistData* query, const float& limit,
-                        const int& sampleLevel) {
-  queryResultSize = 0;
-  queryResultSampleSize = 0;
-  numDistComps = 0UL;
-  if ((size <= 0) || (query == NULL) || (limit < 0.0F) || (sampleLevel < 0) ||
-      ((sampleLevel >= levels) && (size > 1))) {
-    if (verbosity > 0) {
-      LOG(ERROR) << "Invalid argument(s).";
-    }
-    return 0;
-  }
-  setNewQuery(query);
-  return doFindAllInRange(limit, sampleLevel);
-}
-
-/*!
- * Perform an approximate range query for the specified item. The upper limit on
- * the query-to-item distance must be supplied. The search is relative to the
- * random level <em>sampleLevel</em> (default is <em>0</em>, i.e. the complete
- * data set). The method also makes use of a parameter (<code>scaleFactor
- * </code>) that influences the trade-off between time and accuracy.
- *
- * @param scaleFactor Additional search efforts.
- * @param query The query location.
- * @param limit The range limit.
- * @param sampleLevel The sample level with respect to which the query is
- *                    performed.
- *
- * @return The number of elements actually found.
- *
- * @note The query result can be obtained via calls to the following methods:
- *       <code>getResultAcc</code>, <code>getResultDists</code>,
- *       <code>getResultDistComps</code>, <code>getResultIndices</code> and
- *       <code>getResultNumFound</code>. The result items are sorted in
- *       increasing order of their distances to the query.
- */
-int RCT::findMostInRange(DistData* query, const float& limit,
-                         const float& scaleFactor, const int& sampleLevel) {
-  queryResultSize = 0;
-  queryResultSampleSize = 0;
-  numDistComps = 0UL;
-  if ((size <= 0) || (query == NULL) || (limit < 0.0F) || (sampleLevel < 0) ||
-      ((sampleLevel >= levels) && (size > 1)) || (scaleFactor <= 0.0F)) {
-    if (verbosity > 0) {
-      LOG(ERROR) << "Invalid argument(s).";
-    }
-    return 0;
-  }
-  setNewQuery(query);
-  return doFindMostInRange(limit, sampleLevel, scaleFactor);
-}
-
-/*!
  * Perform an approximate nearest-neighbor query for the specified item. The
  * number of desired nearest neighbors <code>howMany</code> (default <em>1</em>)
  * can be specified. The search is relative to the random level
@@ -490,6 +447,7 @@ int RCT::findMostInRange(DistData* query, const float& limit,
  *       <code>getResultNumFound</code>. The result items are sorted in
  *       increasing order of their distances to the query.
  */
+_RCT_TMPL_DECL
 int RCT::findNear(DistData* query, const int& howMany, const float& scaleFactor,
                   const int& sampleLevel) {
   queryResultSize = 0;
@@ -526,6 +484,7 @@ int RCT::findNear(DistData* query, const int& howMany, const float& scaleFactor,
  *       <code>getResultNumFound</code>. The result items are sorted in
  *       increasing order of their distances to the query.
  */
+_RCT_TMPL_DECL
 int RCT::findNearest(DistData* query, const int& howMany,
                      const int& sampleLevel) {
   queryResultSize = 0;
@@ -548,6 +507,7 @@ int RCT::findNearest(DistData* query, const int& howMany,
  *
  * @return The average degree of a node in the RCT.
  */
+_RCT_TMPL_DECL
 float RCT::getAvgDegree() const { return avgDegree; }
 
 /*!
@@ -555,6 +515,7 @@ float RCT::getAvgDegree() const { return avgDegree; }
  *
  * @return The scale factor used during RCT construction.
  */
+_RCT_TMPL_DECL
 float RCT::getBuildScaleFactor() const { return buildScaleFactor; }
 
 /*!
@@ -562,6 +523,7 @@ float RCT::getBuildScaleFactor() const { return buildScaleFactor; }
  *
  * @return The coverage parameter of the RCT.
  */
+_RCT_TMPL_DECL
 float RCT::getCoverageParameter() const { return coverageParameter; }
 
 /*!
@@ -577,6 +539,7 @@ float RCT::getCoverageParameter() const { return coverageParameter; }
  *
  * @return A pointer to the data items in the RCT.
  */
+_RCT_TMPL_DECL
 DistData** RCT::getData() { return data; }
 
 /*!
@@ -589,6 +552,7 @@ DistData** RCT::getData() { return data; }
  * @return If successful, the number of RCT items is returned. Otherwise, zero
  *         is returned.
  */
+_RCT_TMPL_DECL
 int RCT::getExternToInternMapping(int* result, int capacity) const {
   int i;
   if ((result == NULL) || (capacity < size)) {
@@ -613,6 +577,7 @@ int RCT::getExternToInternMapping(int* result, int capacity) const {
  * @return If successful, the number of RCT items is returned. Otherwise, zero
  *         is returned.
  */
+_RCT_TMPL_DECL
 int RCT::getInternToExternMapping(int* result, int capacity) const {
   int i;
   if ((result == NULL) || (capacity < size)) {
@@ -638,6 +603,7 @@ int RCT::getInternToExternMapping(int* result, int capacity) const {
  * @return If successful, the number of RCT levels is returned (excluding that
  *         of the root). If unsuccessful, zero is returned.
  */
+_RCT_TMPL_DECL
 int RCT::getLevelSetSizes(int* result, int capacity) const {
   int lvl;
   if ((result == NULL) || (capacity < levels)) {
@@ -657,6 +623,7 @@ int RCT::getLevelSetSizes(int* result, int capacity) const {
  *
  * @return The degree of the node with the largest number of children.
  */
+_RCT_TMPL_DECL
 int RCT::getMaxDegree() const { return maxDegree; }
 
 /*!
@@ -669,6 +636,7 @@ int RCT::getMaxDegree() const { return maxDegree; }
  * @return If successful, the number of RCT items is returned. If unsuccessful,
  *         zero is returned.
  */
+_RCT_TMPL_DECL
 int RCT::getMaxLevelAssignment(int* result, int capacity) const {
   int i;
   int lvl;
@@ -693,6 +661,7 @@ int RCT::getMaxLevelAssignment(int* result, int capacity) const {
  *
  * @return The maxmimum number of allowed parents per node.
  */
+_RCT_TMPL_DECL
 int RCT::getMaxParents() const { return maxParents; }
 
 /*!
@@ -700,6 +669,7 @@ int RCT::getMaxParents() const { return maxParents; }
  *
  * @return The number of data items the RCT is built on.
  */
+_RCT_TMPL_DECL
 int RCT::getNumItems() const { return size; }
 
 /*!
@@ -710,6 +680,7 @@ int RCT::getNumItems() const { return size; }
  *       rebuilding an RCT on the same data with a different random leveling
  *       (using different seeds for example).
  */
+_RCT_TMPL_DECL
 int RCT::getNumLevels() const { return levels; }
 
 /*!
@@ -723,6 +694,7 @@ int RCT::getNumLevels() const { return levels; }
  *
  * @return The number of nodes in the RCt.
  */
+_RCT_TMPL_DECL
 int RCT::getNumNodes() const { return numNodes; }
 
 /*!
@@ -736,6 +708,7 @@ int RCT::getNumNodes() const { return numNodes; }
  *
  * @return If unsuccessful, a negative value is returned.
  */
+_RCT_TMPL_DECL
 float RCT::getResultAcc(float* exactDistList, int howMany) const {
   int i;
   int loc = 0;
@@ -764,6 +737,7 @@ float RCT::getResultAcc(float* exactDistList, int howMany) const {
  * @return If successful, the number of items found is returned. Otherwise,
  *         zero is returned.
  */
+_RCT_TMPL_DECL
 int RCT::getResultDists(float* result, int capacity) const {
   int i;
   if ((result == NULL) || (capacity < queryResultSize)) {
@@ -784,6 +758,7 @@ int RCT::getResultDists(float* result, int capacity) const {
  *
  * @return The number of distance comparisons.
  */
+_RCT_TMPL_DECL
 unsigned long RCT::getResultDistComps() const { return numDistComps; }
 
 /*!
@@ -796,6 +771,7 @@ unsigned long RCT::getResultDistComps() const { return numDistComps; }
  * @return If successful, the number of items found is returned. Otherwise,
  *         zero is returned.
  */
+_RCT_TMPL_DECL
 int RCT::getResultIndices(int* result, int capacity) const {
   int i;
   if ((result == NULL) || (capacity < queryResultSize)) {
@@ -815,6 +791,7 @@ int RCT::getResultIndices(int* result, int capacity) const {
  *
  * @return Number of results found in the most recent query.
  */
+_RCT_TMPL_DECL
 int RCT::getResultNumFound() const { return queryResultSize; }
 
 /*!
@@ -822,11 +799,13 @@ int RCT::getResultNumFound() const { return queryResultSize; }
  *
  * @return Sample size used in the most recent query.
  */
+_RCT_TMPL_DECL
 int RCT::getResultSampleSize() const { return queryResultSampleSize; }
 
 /*!
  * Retrieve the seed value used to initialize the random number generator.
  */
+_RCT_TMPL_DECL
 unsigned long RCT::getRNGSeed() const { return seed; }
 
 /*!
@@ -835,6 +814,7 @@ unsigned long RCT::getRNGSeed() const { return seed; }
  * <code>findNearest</code> operations would be forced to compute
  * all needed distances from scratch.
  */
+_RCT_TMPL_DECL
 void RCT::resetQuery() { setNewQuery(NULL); }
 
 /*!
@@ -845,6 +825,7 @@ void RCT::resetQuery() { setNewQuery(NULL); }
  * @return If successful, the number of RCT items is returned. Otherwise,
  *         zero is returned.
  */
+_RCT_TMPL_DECL
 int RCT::saveToFile(const char* fileName) const {
   int i;
   int j;
@@ -931,6 +912,7 @@ int RCT::saveToFile(const char* fileName) const {
  * @return If the coverage parameter was changes <em>true</em> is returned.
  *         Otherwise, <em>false</em> is returned.
  */
+_RCT_TMPL_DECL
 bool RCT::setCoverageParameter(const float& coverageParameter) {
   if ((*this).coverageParameter == coverageParameter) {
     return false;
@@ -945,6 +927,7 @@ bool RCT::setCoverageParameter(const float& coverageParameter) {
  * Verbosity of <em>2</em>: error and progress messages only. Verbosity of
  * <em>3</em> or more: error, progress, and debug messages reported.
  */
+_RCT_TMPL_DECL
 void RCT::setVerbosity(const int& verbosity) {
   if (verbosity <= 0) {
     (*this).avgDegree = 0;
@@ -964,6 +947,7 @@ void RCT::setVerbosity(const int& verbosity) {
  * @param itemIndex The internal index of a data item.
  * @return The distance from the current query to that item.
  */
+_RCT_TMPL_DECL
 float RCT::computeDistFromQuery(int itemIndex) {
   if (distFromQueryList[itemIndex] == RCT_UNKNOWN_) {
     distFromQueryList[itemIndex] =
@@ -978,6 +962,7 @@ float RCT::computeDistFromQuery(int itemIndex) {
 /*!
  * Builds an RCT on items in the first locations of the scrambled data array.
  */
+_RCT_TMPL_DECL
 void RCT::doBuild() {
   int i = 0;
   int j = 0;
@@ -1140,189 +1125,6 @@ void RCT::doBuild() {
 }
 
 /*!
- * Performs an exact range query from the current query object, with respect to
- * a subset of the items. The subset consists of all items at the indicated
- * sample level and higher. The upper limit on the query-to-item distance is
- * <em>limit</em>; the number of neighbours actually found is returned.
- *
- * @param limit The limit on the query-to-neighbor distance.
- * @param sampleLevel The sample level which is searched.
- *
- * @return The number of neighbors found.
- */
-int RCT::doFindAllInRange(float limit, int sampleLevel) {
-  int i;
-
-  // Handle the singleton case separately.
-  if (size == 1) {
-    queryResultDistList[0] = computeDistFromQuery(0);
-    queryResultIndexList[0] = 0;
-    queryResultSampleSize = 1;
-
-    if (queryResultDistList[0] <= limit) {
-      queryResultSize = 1;
-    } else {
-      queryResultSize = 0;
-    }
-
-    return queryResultSize;
-  }
-
-  queryResultSampleSize = levelSetSizeList[sampleLevel];
-
-  // Compute distances from the current query to all items.
-
-  for (i = 0; i < queryResultSampleSize; i++) {
-    queryResultDistList[i] = computeDistFromQuery(i);
-    queryResultIndexList[i] = i;
-  }
-
-  // Sort the items by distances, returning the number of
-  //   elements actually found.
-
-  quickSort(queryResultDistList, queryResultIndexList, 0,
-            queryResultSampleSize - 1);
-
-  // Report only those items whose distances fall within the limit.
-
-  i = 0;
-
-  while ((i < queryResultSize) && (queryResultDistList[i] <= limit)) {
-    i++;
-  }
-
-  queryResultSize = i;
-
-  return queryResultSize;
-}
-
-/*!
- * Performs an approximate range query from the current query object, with
- * respect to a subset of the items. The subset consists of all items at the
- * indicated sample level and higher. The upper limit on the query-to-item
- * distance must be supplied. The number of elements actually found is returned.
- *
- * The results are stored in the RCT query result lists. The parameter
- * <em>scaleFactor</em> influences the tradeoff between speed and accuracy.
- *
- * @param limit The limit of query-to-neighbor distance.
- * @param sampleLevel which is searched.
- * @param scaleFactor The time/accuracy trade-off factor.
- *
- * @return Number of neighbors found.
- */
-int RCT::doFindMostInRange(float limit, int sampleLevel, float scaleFactor) {
-  int i;
-  int j;
-  int lvl;
-  int child = 0;
-  int minNeighbors = 0;
-  int nodeIndex = 0;
-  int numChildren = 0;
-  int numFound = 0;
-  int numRetained = 0;
-  int* childList = NULL;
-
-  // Handle the singleton case separately.
-
-  if (size == 1) {
-    queryResultDistList[0] = computeDistFromQuery(0);
-    queryResultIndexList[0] = 0;
-    queryResultSampleSize = 1;
-
-    if (queryResultDistList[0] <= limit) {
-      queryResultSize = 1;
-    } else {
-      queryResultSize = 0;
-    }
-
-    return queryResultSize;
-  }
-
-  // Compute the sample size for the operation.
-
-  queryResultSampleSize = levelSetSizeList[sampleLevel];
-
-  // Compute the minimum number of neighbours for each sample level.
-
-  minNeighbors = (int)((scaleFactor * coverageParameter) + 0.999999F);
-
-  // Load the root as the tentative sole member of the query result list.
-
-  queryResultSize = 0;
-
-  queryResultDistList[0] = computeDistFromQuery(0);
-  queryResultIndexList[0] = 0;
-  numRetained = 1;
-
-  // From the root, search out other nodes to place in the query result.
-
-  for (lvl = levels - 1; lvl >= sampleLevel; lvl--) {
-    // For every node at the active level, load its children
-    //   into the scratch list, and compute their distances to the query.
-
-    numFound = 0;
-
-    for (i = 0; i < numRetained; i++) {
-      nodeIndex = queryResultIndexList[i];
-      numChildren = childLSizeLList[lvl][nodeIndex];
-      childList = childIndexLLList[lvl][nodeIndex];
-
-      for (j = 0; j < numChildren; j++) {
-        child = childList[j];
-
-        if (visitedNodeIndexList[child] != TRUE) {
-          visitedNodeIndexList[child] = TRUE;
-          tempResultIndexList[numFound] = child;
-          tempResultDistList[numFound] = computeDistFromQuery(child);
-          numFound++;
-        }
-      }
-    }
-
-    for (i = 0; i < numFound; i++) {
-      visitedNodeIndexList[tempResultIndexList[i]] = FALSE;
-    }
-
-    // Extract the closest nodes from the list of accumulated children,
-    //   and keep them as the tentative parents of the query.
-
-    quickSort(tempResultDistList, tempResultIndexList, 0, numFound - 1);
-
-    // Determine the elements in the query result that
-    //   lie within the range.
-
-    queryResultSize = 0;
-
-    while ((queryResultSize < numFound) &&
-           (tempResultDistList[queryResultSize] <= limit)) {
-      queryResultIndexList[queryResultSize] =
-          tempResultIndexList[queryResultSize];
-      queryResultDistList[queryResultSize] =
-          tempResultDistList[queryResultSize];
-      queryResultSize++;
-    }
-
-    // Determine the number of elements to be retained at this level.
-
-    numRetained =
-        (int)((scaleFactor * numFound * coverageParameter) + 0.999999F);
-
-    if (numRetained < minNeighbors) {
-      numRetained = minNeighbors;
-    }
-
-    if (numRetained > numFound) {
-      numRetained = numFound;
-    }
-  }
-
-  childList = NULL;
-
-  return queryResultSize;
-}
-
-/*!
  * Perform an approximate nearest-neighbor query for the specified item. The
  * number of desired nearest neighbors <code>howMany</code> must be specified.
  * The search is relative to the random level <em>sampleLevel</em>.
@@ -1334,6 +1136,7 @@ int RCT::doFindMostInRange(float limit, int sampleLevel, float scaleFactor) {
  *
  * @return The number of elements actually found.
  */
+_RCT_TMPL_DECL
 int RCT::doFindNear(int howMany, int sampleLevel, float scaleFactor) {
   int i;
   int j;
@@ -1435,6 +1238,7 @@ int RCT::doFindNear(int howMany, int sampleLevel, float scaleFactor) {
  *
  * @return The number of elements actually found.
  */
+_RCT_TMPL_DECL
 int RCT::doFindNearest(int howMany, int sampleLevel) {
   int i;
 
@@ -1478,6 +1282,7 @@ int RCT::doFindNearest(int howMany, int sampleLevel) {
  *
  * @return Number of items sorted.
  */
+_RCT_TMPL_DECL
 int RCT::partialQuickSort(int howMany, float* distList, int* indexList,
                           int rangeFirst, int rangeLast) {
   int i;
@@ -1806,6 +1611,7 @@ int RCT::partialQuickSort(int howMany, float* distList, int* indexList,
  *
  * @note Should only be called immediately after the construction!
  */
+_RCT_TMPL_DECL
 void RCT::printStats() const {
   LOG(INFO) << "RCT build statistics:";
   LOG(INFO) << "  size                   == " << size;
@@ -1827,6 +1633,7 @@ void RCT::printStats() const {
  * @param rangeFirst First element of range.
  * @param rangeLast Last element of range.
  */
+_RCT_TMPL_DECL
 void RCT::quickSort(float* distList, int* indexList, int rangeFirst,
                     int rangeLast) {
   int pivotLoc = 0;
@@ -2020,6 +1827,7 @@ void RCT::quickSort(float* distList, int* indexList, int rangeFirst,
 /*!
  * Reserve storage for the RCT and items data.
  */
+_RCT_TMPL_DECL
 void RCT::reserveStorage() {
   int i;
   int lvl;
@@ -2095,6 +1903,7 @@ void RCT::reserveStorage() {
  *
  * @param query The new query item.
  */
+_RCT_TMPL_DECL
 void RCT::setNewQuery(DistData* query) {
   int i;
   if (query != this->query) {
@@ -2113,6 +1922,7 @@ void RCT::setNewQuery(DistData* query) {
  * @note This operation determines the shape of the RCT without actually
  *       assigning any items to it.
  */
+_RCT_TMPL_DECL
 void RCT::setupLevels(int numItems, int numParents) {
   int i;
   int lvl;
@@ -2196,6 +2006,7 @@ void RCT::setupLevels(int numItems, int numParents) {
  *
  * @return Fraction of edges that are well-formed.
  */
+_RCT_TMPL_DECL
 double RCT::getFractionOfWellformedEdges() {
   // Count the well-formed edges.
   long long wellFormedEdges = 0LL;
