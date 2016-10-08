@@ -20,4 +20,5 @@ before_install:
   - cd glog-0.3.4 && ./configure && make && sudo make install && cd -
 
 script:
-  - bazel build //indexing/rct/...
+  - bazel query 'kind("cc_library rule", //...)' except //third_party/... | xargs -n1 bazel build
+  - bazel query 'kind("cc_test rule", //...)' | xargs -n1 bazel test
