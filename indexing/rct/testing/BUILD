@@ -22,3 +22,15 @@ cc_test(
         "//third_party/gtest:gtest_main",
     ],
 )
+
+cc_test(
+    name = "rank_cover_tree_test",
+    srcs = ["rank_cover_tree_test.cc"],
+    size = "small",
+    deps = [
+        "//indexing/rct/public:dense_feature_vector",
+        "//indexing/rct/public:metrics",
+        "//indexing/rct/public:rank_cover_tree",
+        "//third_party/gtest:gtest_main",
+    ],
+)

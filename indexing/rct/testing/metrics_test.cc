@@ -31,6 +31,7 @@ class MetricsTest : public ::testing::Test {
     return reals;
   }
 
+ private:
   std::mt19937 rand_;
 };
 
