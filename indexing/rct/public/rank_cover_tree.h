@@ -40,6 +40,11 @@ class RankCoverTree {
              const double build_coverage, const size_t num_parents,
              const double sample_probability);
 
+  // Accept a new query item.
+  //
+  // TODO: Fold this in with the actual query operation.
+  void SetNewQuery(const DomainType* query);
+
   // Prints statistics related to the RCT construction.
   void PrintStats() const;
 
@@ -135,6 +140,11 @@ class RankCoverTree {
   // void setVerbosity(const int& verbosity);
 
  private:
+  // Builds an RCT on a set of data items.
+  //
+  // TODO: Move this into a factory.
+  void BuildIncrementally();
+
   // Sets up random leveling, reserves RCT storage, and sets up index
   // parameters. As a result of this operation, the RCT size, number of levels,
   // etc, are set.
@@ -146,11 +156,22 @@ class RankCoverTree {
   // TODO: Migrate this to a factory class.
   void AllocateStorage();
 
+  // Computes query-distance of the provided object.
+  DistanceType ComputeDistFromQuery(const int index);
+
+  // Performs approximate nearest neighbor search with respect to a given level
+  // of the RCT.
+  int FindNear(const int how_many, const int sample_level, const double coverage);
+
+  // Partial quicksort.
+  //
+  // TODO: Deprecate this in favor of std::partial_sort with mutable
+  // zip-iterators.
+  int PartialQuickSort(int howMany, float* distList, int* indexList,
+                       int rangeFirst, int rangeLast);
+
   // //! Resets the query.
   // void resetQuery();
-
-  // //! Returns the distance of an item from the query.
-  // float computeDistFromQuery(int itemIndex);
 
   // //! Build an RCT on data items.
   // void doBuild();
@@ -161,22 +182,13 @@ class RankCoverTree {
   // //! Performs an approximate range query.
   // int doFindMostInRange(float limit, int sampleLevel, float scaleFactor);
 
-  // //! Performs an approximate nearest-neighbor query.
-  // int doFindNear(int howMany, int sampleLevel, float scaleFactor);
-
   // //! Performs an exact nearest-neighbor query.
   // int doFindNearest(int howMany, int sampleLevel);
 
-  // //! Partial quicksort.
-  // int partialQuickSort(int howMany, float* distList, int* indexList,
-  //                      int rangeFirst, int rangeLast);
 
   // //! Quicksort.
   // void quickSort(float* distList, int* indexList, int rangeFirst,
   //                int rangeLast);
-
-  // //! Accept a new query item.
-  // void setNewQuery(DomainType* query);
 
   // Data elements stored in the RCT.
   //
@@ -202,7 +214,9 @@ class RankCoverTree {
   //
   // Stores the number of element in the level sets L_0,L_1,... depending on how
   // the items are distributed across levels by the random leveling process.
-  std::vector<size_t> level_set_size_;
+  // 
+  // TODO: Use managed container.
+  int* levelSetSizeList;
 
   // Maximum number of parents per node.
   //
@@ -231,13 +245,13 @@ class RankCoverTree {
   // Stores the mapping from internal item indices to external (input) indices.
   // This mapping represents the internal permutation of data items done by the
   // RCT during the random leveling. The original data array is not changed.
-  std::vector<int> intern_to_extern_mapping_;
+  std::vector<size_t> intern_to_extern_mapping_;
 
   // Height of the RCT.
   //
   // Number of sample levels in the rank cover tree (other than the artificial
   // root's). The bottom rank cover tree level has index 0.
-  size_t height_;
+  size_t levels;
 
   // Total number of nodes.
   //
@@ -258,15 +272,14 @@ class RankCoverTree {
   //
   // TODO: Use managed containers.
   // TODO: Move this into an RCT factory.
-  std::vector<std::vector<std::vector<size_t>>> tentative_parent_list_;
-  // WAS: int*** parentIndexLLList;
+  int*** parentIndexLLList;
 
   // Tentative parent list lengths.
   //
   // These arrays store the number of tentative parents found for each node
   // during the construction phase.
   //
-  // TODO: Use managed containers.
+  // TODO: Remove this in favor of 'tentative_parent_list_[].size()'
   // TODO: Move this into an RCT factory.
   int** parentLSizeLList;
 
@@ -277,10 +290,9 @@ class RankCoverTree {
   // construction and are used to descend the RCT during search operations.
   //
   // TODO: Use managed containers.
-  std::vector<std::vector<std::vector<size_t>>> child_index_list_;
-  // WAS: int*** childIndexLLList;
+  int*** childIndexLLList;
 
-  // TODO: Remove once obsolete.
+  // TODO: Remove once obsolete, use 'child_index_list_[].size()' instead!!
   int** childLSizeLList;
 
   // The current query object.
@@ -290,7 +302,7 @@ class RankCoverTree {
   // where computation time can be saved.
   //
   // TODO: Move per-query state out of the index.
-  const DomainType* query;
+  const DomainType* query_;
 
   // Distance cache.
   //
@@ -299,8 +311,7 @@ class RankCoverTree {
   //
   // TODO: Move per-query state out of the index.
   // TODO: Use managed container.
-  std::vector<DistanceType> dist_from_query_list;
-  // WAS: float* distFromQueryList;
+  float* distFromQueryList;
 
   // Item cache.
   //
@@ -309,8 +320,7 @@ class RankCoverTree {
   //
   // TODO: Move per-query state out of the index.
   // TODO: Use managed container.
-  std::vector<size_t> stored_dist_index_list_;
-  // WAS: int* storedDistIndexList;
+  int* storedDistIndexList;
 
   // Cache length.
   //
@@ -326,7 +336,7 @@ class RankCoverTree {
   // the most recent RCT operation.
   //
   // TODO: Move per-query state out of the index.
-  size_t numDistComps;
+  size_t num_dist_comps_;
 
   // Level quota list.
   //
@@ -336,7 +346,7 @@ class RankCoverTree {
   //
   // TODO: Move per-query state out of the index.
   // TODO: Use managed container.
-  std::vector<size_t> level_quota_list_;
+  int* levelQuotaList;
 
   // Coverage parameter.
   //
@@ -353,8 +363,7 @@ class RankCoverTree {
   //
   // TODO: Move per-query state out of the index.
   // TODO: Use managed container.
-  std::vector<size_t> query_result_index_list_;
-  // WAS: int* queryResultIndexList;
+  int* queryResultIndexList;
 
   // Query result distances.
   //
@@ -363,8 +372,7 @@ class RankCoverTree {
   //
   // TODO: Move per-query state out of the index.
   // TODO: Use managed container.
-  std::vector<DistanceType> query_result_dist_list_;
-  // WAS: float* queryResultDistList;
+  float* queryResultDistList;
 
   // Query result size.
   //
@@ -387,8 +395,7 @@ class RankCoverTree {
   //
   // TODO: Move per-query state out of the index.
   // TODO: Use managed container.
-  std::vector<bool> visited_node_index_list_;
-  // WAS: int* visitedNodeIndexList;
+  int* visitedNodeIndexList;
 
   // Temporary distance list.
   //
@@ -397,8 +404,7 @@ class RankCoverTree {
   //
   // TODO: Move per-query state out of the index.
   // TODO: Use managed container.
-  std::vector<DistanceType> temp_result_dist_list_;
-  // WAS: float* tempResultDistList;
+  float* tempResultDistList;
 
   // Temporary result list.
   //
@@ -406,9 +412,9 @@ class RankCoverTree {
   //
   // TODO: Move per-query state out of the index.
   // TODO: Use managed container.
-  std::vector<size_t> temp_result_index_list_;
+  int* tempResultIndexList;
 
-  // Verbosity levle.
+  // Verbosity level.
   //
   // The verbosity level of the RCT determines the amount of feedback provided
   // to the user. Values equal to or less than 0 result in no feedback at all. A
@@ -417,15 +423,13 @@ class RankCoverTree {
   // errors, progress and debug output.
   //
   // TODO: Use logging libraries VLOG levels instead.
-  int verbosity;
+  int verbosity_;
 
   // Build scale factor.
   //
   // The build scale factor determine the scaling that was used during the
   // construction of the RCT.
-  //
-  // TODO: Move to directly specifying the height of the RCT.
-  double buildScaleFactor;
+  double build_coverage_;
 
   // Random number generator seed.
   //

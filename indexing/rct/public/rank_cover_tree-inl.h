@@ -25,6 +25,14 @@ namespace {
 
 constexpr size_t kNoIndex = std::numeric_limits<size_t>::max();
 
+// TODO: Get rid of these constants.
+constexpr int kNone = -1;
+constexpr float kUnknown = -1.f;
+constexpr int kBufSize = 1024;
+constexpr char kVersion[] = "1.0";
+constexpr int FALSE = 0;
+constexpr int TRUE = 1;
+
 }  // namespace
 
 _RCT_TEMPLATE_DECL
@@ -44,42 +52,169 @@ bool _RCT_TEMPLATE_DEFN::Build(const std::vector<const DomainType*>& data,
 
   VLOG(2) << "Building RCT from " << data.size() << " data elements...";
   data_ = data;
+  sample_rate_ = 1.0 / sample_probability;
   SetupLevels(data_.size(), num_parents, sample_probability);
   AllocateStorage();
 
-  // // Randomly assign data items to RCT levels.
-  // // TODO: Extract function.
-  // for (i = 0; i < size; i++) {
-  //   internToExternMapping[i] = i;
-  // }
-  // for (i = size - 1; i >= 0; i--) {
-  //   std::uniform_int_distribution<size_t> distribution(0, i);
-  //   loc = distribution(rand_);
-  //   temp = internToExternMapping[loc];
-  //   internToExternMapping[loc] = internToExternMapping[i];
-  //   internToExternMapping[i] = temp;
-  // }
+  // Randomly assign data items to RCT levels.
+  std::random_shuffle(
+      intern_to_extern_mapping_.begin(), intern_to_extern_mapping_.end(),
+      [this](const size_t range) {
+        return std::uniform_int_distribution<size_t>(0, range - 1)(rand_);
+      });
 
-  // // Build the RCT structure.
-  // numDistComps = 0UL;
-  // buildScaleFactor = scaleFactor;
-  // doBuild();
-
+  // Build the index.
+  num_dist_comps_ = 0;
+  build_coverage_ = build_coverage;
+  BuildIncrementally();
   PrintStats();
-  return true;
+  return true;  // TODO: should not return anything.
+}
+
+_RCT_TEMPLATE_DECL
+void _RCT_TEMPLATE_DEFN::SetNewQuery(const DomainType* query) {
+  if (query != query_) {
+    for (int i = 0; i < num_stored_dists_; ++i) {
+      distFromQueryList[storedDistIndexList[i]] = kUnknown;
+    }
+    num_stored_dists_ = 0;
+    query_ = query;
+  }
 }
 
 _RCT_TEMPLATE_DECL
 void _RCT_TEMPLATE_DEFN::PrintStats() const {
   VLOG(2) << "RCT build statistics:";
   VLOG(2) << "  size                   == " << data_.size();
-  VLOG(2) << "  levels                 == " << height_;
+  VLOG(2) << "  levels                 == " << levels;
   VLOG(2) << "  total nodes            == " << num_nodes_;
   VLOG(2) << "  max parents per node   == " << max_parents_;
   VLOG(2) << "  max node degree        == " << max_degree_;
   VLOG(2) << "  avg node degree        == " << average_degree_;
-  VLOG(2) << "  distance comparisons   == " << numDistComps;
+  VLOG(2) << "  distance comparisons   == " << num_dist_comps_;
   VLOG(2) << "  RNG seed               == " << seed_;
+}
+
+// TODO: Extract a function like BuildLevel(i) and call that in a loop.
+_RCT_TEMPLATE_DECL
+void _RCT_TEMPLATE_DEFN::BuildIncrementally() {
+  // Build the top level of the RCT as a special case by promoting the first
+  // data element to the artificial root node of the RCT.
+  parentLSizeLList[levels][0] = 0;
+  parentIndexLLList[levels][0] = NULL;
+  size_t num_lower_items = levelSetSizeList[levels - 1];
+  size_t num_upper_items = 0;
+  childLSizeLList[levels][0] = num_lower_items;
+  childIndexLLList[levels][0] = new int[num_lower_items];
+  max_degree_ = num_lower_items;
+  size_t total_degree = num_lower_items;
+  for (int i = 0; i < num_lower_items; i++) {
+    childIndexLLList[levels][0][i] = i;
+  }
+  VLOG(2) << "RCT root level constructed.";
+
+  for (int lvl = levels - 2; lvl >= 0; lvl--) {
+    num_upper_items = levelSetSizeList[lvl + 1];
+    num_lower_items = levelSetSizeList[lvl];
+
+    // Connect the bottom level of the current partial RCT to the items on this
+    // level. The elements on the previously constructed level (lvl + 1) are to
+    // become parents of the items on the current level.
+    //
+    // Also, temporarily store (in "childLSizeLList") the number of times each
+    // node is requested as a parent.
+    for (int child = 0; child < num_lower_items; child++) {
+      if (child % 5000 == 4999) {
+        VLOG(2) << "Inserting item " << child + 1 << " (out of "
+                << num_lower_items << ") at level " << lvl << "...";
+      }
+
+      // Find some parents for the current child. If only one parent is
+      // requested and the child has a copy at the level above, then just choose
+      // it directly. Otherwise, do a search with respect to the partial RCT.
+      if ((child < num_upper_items) && (max_parents_ == 1)) {
+        query_result_size_ = 1;
+        queryResultIndexList[0] = child;
+      } else {
+        SetNewQuery(data_[intern_to_extern_mapping_[child]]);
+        // TODO: doFindNear(max_parents_, lvl + 1, buildScaleFactor);
+      }
+
+      // Connect links from child to parents. If a copy of the child also exists
+      // at the upper level, then make sure that it is listed as the first
+      // parent.
+      parentLSizeLList[lvl][child] = query_result_size_;
+      parentIndexLLList[lvl][child] = new int[max_parents_];
+      int offset = 0;
+      if ((child < num_upper_items) && (queryResultIndexList[0] != child)) {
+        // The first query result should have been a copy of the child, but
+        // wasn't. Repair this situation by explicitly placing a copy of the
+        // child at the head of the list, and shifting the remaining query
+        // result elements to accommodate the child copy.
+        offset = 1;
+        parentIndexLLList[lvl][child][0] = child;
+        childLSizeLList[lvl + 1][child]++;
+      } else {
+        // Either the query result contains a copy of the child at its head, or
+        // the child isn't supposed to appear in the query result anyway.
+        offset = 0;
+        parentIndexLLList[lvl][child][0] = queryResultIndexList[0];
+        childLSizeLList[lvl + 1][queryResultIndexList[0]]++;
+      }
+      for (int i = 1; i < query_result_size_; i++) {
+        // Apply an offset shift only until a copy of the child is found (one
+        // may not necessarily be found). This is to avoid picking up this copy
+        // more than once.
+        if (queryResultIndexList[i] == child) {
+          offset = 0;
+        } else {
+          parentIndexLLList[lvl][child][i] = queryResultIndexList[i - offset];
+          childLSizeLList[lvl + 1][queryResultIndexList[i - offset]]++;
+        }
+      }
+    }
+
+    // For each parent, reserve storage for its child lists.
+    for (int parent = 0; parent < num_upper_items; parent++) {
+      int childLSize = childLSizeLList[lvl + 1][parent];
+
+      if (childLSize > 0) {
+        childIndexLLList[lvl + 1][parent] =
+            new int[childLSizeLList[lvl + 1][parent]];
+        childLSizeLList[lvl + 1][parent] = 0;
+
+        total_degree += (long int)childLSize;
+
+        if (childLSize > max_degree_) {
+          max_degree_ = childLSize;
+        }
+      }
+    }
+
+    // Construct child lists for each of the parents, by reversing the
+    // child-to-parent edges. Since the child-to-parent edges are no longer
+    // needed, delete them.
+    for (int child = 0; child < num_lower_items; child++) {
+      for (int i = parentLSizeLList[lvl][child] - 1; i >= 0; i--) {
+        int parent = parentIndexLLList[lvl][child][i];
+        int j = childLSizeLList[lvl + 1][parent];
+        childIndexLLList[lvl + 1][parent][j] = child;
+        childLSizeLList[lvl + 1][parent]++;
+      }
+
+      if (parentLSizeLList[lvl][child] > 0) {
+        delete[] parentIndexLLList[lvl][child];
+        parentIndexLLList[lvl][child] = NULL;
+        parentLSizeLList[lvl][child] = 0;
+      }
+    }
+
+    // The RCT has grown by one level.
+    VLOG(2) << "RCT level " << lvl << "constructed.";
+  }
+
+  average_degree_ =
+      (float)(((double)total_degree) / (num_nodes_ - data_.size()));
 }
 
 _RCT_TEMPLATE_DECL
@@ -94,66 +229,496 @@ void _RCT_TEMPLATE_DEFN::SetupLevels(const size_t num_items,
   std::geometric_distribution<size_t> dist(1.0 - sample_probability);
   std::generate(max_level_list.begin(), max_level_list.end(),
                 [this, &dist]() { return dist(rand_); });
-  height_ = *std::max_element(max_level_list.begin(), max_level_list.end());
+  levels = *std::max_element(max_level_list.begin(), max_level_list.end());
 
   // Allocate storage for various containers.
-  level_quota_list_.resize(height_ + 1);
-  level_set_size_.resize(height_ + 1);
+  levelQuotaList = new int[levels + 1];
+  levelSetSizeList = new int[levels + 1];
 
   // Generate the sizes of individual levels in the RCT. The top-most level
   // contains only a single artificially promoted node.
-  level_set_size_[height_] = 1;
-  for (const size_t max_level : max_level_list) {
-    for (size_t level = 0; level <= max_level; ++level) {
-      ++level_set_size_[level];
+  levelQuotaList = new int[levels + 1];
+  levelSetSizeList = new int[levels + 1];
+  for (int lvl = 0; lvl < levels; lvl++) {
+    levelQuotaList[lvl] = 0;
+    levelSetSizeList[lvl] = 0;
+  }
+  levelQuotaList[levels] = 0;
+  levelSetSizeList[levels] = 1;
+  for (int i = 0; i < data_.size(); i++) {
+    for (int lvl = max_level_list[i]; lvl >= 0; lvl--) {
+      levelSetSizeList[lvl]++;
     }
   }
 
   // Calculate the number of nodes in the RCT.
-  num_nodes_ =
-      std::accumulate(level_set_size_.begin(), level_set_size_.end(), 0);
+  num_nodes_ = 0;
+  for (int lvl = 0; lvl < levels; ++lvl) {
+    num_nodes_ += levelSetSizeList[lvl];
+  }
 }
 
 _RCT_TEMPLATE_DECL
 void _RCT_TEMPLATE_DEFN::AllocateStorage() {
-  // Initialize index mapping.
+  // Reserve storage for the mapping between internal and external data indices.
   intern_to_extern_mapping_.resize(data_.size());
-  for (size_t i = 0; i < data_.size(); ++i) {
+  for (int i = 0; i < data_.size(); i++) {
     intern_to_extern_mapping_[i] = i;
   }
 
-  // Initialize storage for tentative parent-child edges for all nodes at each
-  // individual level of the RCT.
-  tentative_parent_list_.resize(height_ + 1);
-  for (size_t level = 0; level <= height_; ++level) {
-    tentative_parent_list_[level].resize(level_set_size_[level]);    
-  }
-  child_index_list_.resize(height_ + 1);
-  for (size_t level = 0; level <= height_; ++level) {
-    child_index_list_[level].resize(level_set_size_[level]);
+  // Set up storage for child-to-parent edges and parent-to-child edges.
+  parentIndexLLList = new int**[levels + 1];
+  parentLSizeLList = new int*[levels + 1];
+  childIndexLLList = new int**[levels + 1];
+  childLSizeLList = new int*[levels + 1];
+  for (int lvl = 0; lvl <= levels; lvl++) {
+    parentIndexLLList[lvl] = new int*[levelSetSizeList[lvl]];
+    parentLSizeLList[lvl] = new int[levelSetSizeList[lvl]];
+    childIndexLLList[lvl] = new int*[levelSetSizeList[lvl]];
+    childLSizeLList[lvl] = new int[levelSetSizeList[lvl]];
+    for (int i = levelSetSizeList[lvl] - 1; i >= 0; i--) {
+      parentIndexLLList[lvl][i] = NULL;
+      parentLSizeLList[lvl][i] = 0;
+      childIndexLLList[lvl][i] = NULL;
+      childLSizeLList[lvl][i] = 0;
+    }
   }
 
-  // Create storage for managing distance computations and query resilts.
-  dist_from_query_list.resize(data_.size());
-  stored_dist_index_list_.resize(data_.size());
+  // Set up storage for managing distance computations and query results.
+  distFromQueryList = new float[data_.size()];
+  storedDistIndexList = new int[data_.size()];
   num_stored_dists_ = 0;
-
-  query_result_dist_list_.resize(data_.size());
-  query_result_index_list_.resize(data_.size());
-  query_result_size_ = 0; 
+  queryResultDistList = new float[data_.size()];
+  queryResultIndexList = new int[data_.size()];
+  query_result_size_ = 0;
   query_result_sample_size_ = 0;
-
-  visited_node_index_list_.resize(data_.size());
-  temp_result_index_list_.resize(data_.size());
-  temp_result_dist_list_.resize(data_.size());
-
-  // TODO: resolve this using vector's constructor.
-  for (size_t i = 0; i < data_.size(); ++i) {
-    stored_dist_index_list_[i] = kNoIndex;
-    query_result_index_list_[i] = kNoIndex;
-    temp_result_index_list_[i] = kNoIndex;
-    visited_node_index_list_[i] = false;
+  visitedNodeIndexList = new int[data_.size()];
+  tempResultIndexList = new int[data_.size()];
+  tempResultDistList = new float[data_.size()];
+  for (int i = 0; i < data_.size(); i++) {
+    distFromQueryList[i] = kUnknown;
+    storedDistIndexList[i] = kNone;
+    queryResultDistList[i] = kUnknown;
+    queryResultIndexList[i] = kNone;
+    visitedNodeIndexList[i] = FALSE;
+    tempResultIndexList[i] = kNone;
+    tempResultDistList[i] = kUnknown;
   }
+}
+
+_RCT_TEMPLATE_DECL
+DistanceType _RCT_TEMPLATE_DEFN::ComputeDistFromQuery(const int index) {
+  if (distFromQueryList[index] == kUnknown) {
+    distFromQueryList[index] =
+        DistanceFn(*query_, *data_[intern_to_extern_mapping_[index]]);
+    storedDistIndexList[num_stored_dists_] = index;
+    ++num_stored_dists_;
+    ++num_dist_comps_;
+  }
+  return distFromQueryList[index];
+}
+
+_RCT_TEMPLATE_DECL
+int _RCT_TEMPLATE_DEFN::FindNear(const int how_many, const int sample_level,
+                                 const double coverage) {
+  // Compute quota of items to be retained at every level.
+  // Rank cover tree rules.levelQuotaList
+  double var_quota = (double)how_many;
+  for (int lvl = sample_level; lvl < levels; lvl++) {
+    levelQuotaList[lvl] = (int)((coverage * var_quota) + 0.999999F);
+    if (levelQuotaList[lvl] < coverage) {
+      levelQuotaList[lvl] = (int)(coverage + 0.999999F);
+    }
+    var_quota /= sample_rate_;
+  }
+  if (how_many > levelQuotaList[sample_level]) {
+    levelQuotaList[sample_level] = how_many;
+  }
+
+  // Load the root as the tentative sole member of the query result list.
+  query_result_size_ = 0;
+  queryResultDistList[0] = ComputeDistFromQuery(0);
+  queryResultIndexList[0] = 0;
+  int num_retained = 1;
+
+  // From the root, search out other nodes to place in the query result.
+  for (int lvl = levels - 1; lvl >= sample_level; lvl--) {
+    // For every node at the active level, load its children
+    //   into the scratch list, and compute their distances to the query.
+    int num_found = 0;
+
+    for (int i = 0; i < num_retained; i++) {
+      int node_index = queryResultIndexList[i];
+      int num_children = childLSizeLList[lvl + 1][node_index];
+      int* childList = childIndexLLList[lvl + 1][node_index];
+
+      for (int j = 0; j < num_children; j++) {
+        int child = childList[j];
+
+        if (visitedNodeIndexList[child] != TRUE) {
+          visitedNodeIndexList[child] = TRUE;
+          tempResultIndexList[num_found] = child;
+          tempResultDistList[num_found] = ComputeDistFromQuery(child);
+          num_found++;
+        }
+      }
+    }
+
+    for (int i = 0; i < num_found; i++) {
+      visitedNodeIndexList[tempResultIndexList[i]] = FALSE;
+    }
+
+    // Extract the closest nodes from the list of accumulated children,
+    //   and keep them as the tentative parents of the query.
+
+    if (num_found > levelQuotaList[lvl]) {
+      num_retained = levelQuotaList[lvl];
+    } else {
+      num_retained = num_found;
+    }
+
+    num_retained = PartialQuickSort(num_retained, tempResultDistList,
+                                    tempResultIndexList, 0, num_found - 1);
+
+    for (int i = 0; i < num_retained; i++) {
+      queryResultIndexList[i] = tempResultIndexList[i];
+      queryResultDistList[i] = tempResultDistList[i];
+    }
+  }
+
+  // Select the final number of neighbors needed.
+  if (num_retained > how_many) {
+    query_result_size_ = how_many;
+  } else {
+    query_result_size_ = num_retained;
+  }
+  return query_result_size_;
+}
+
+// =================[ DO NOT CLEAN UP! WILL BE REMOVED SOON! ]=================
+_RCT_TEMPLATE_DECL
+int _RCT_TEMPLATE_DEFN::PartialQuickSort(int how_many, float* distList,
+                                         int* indexList, int rangeFirst,
+                                         int rangeLast) {
+  int i;
+  int pivotLoc = 0;
+  int pivotIndex = 0;
+  float pivotDist = 0.0F;
+  int tempIndex = 0;
+  float tempDist = 0.0F;
+  int low = 0;
+  int high = 0;
+  int num_found = 0;
+  int numDuplicatesToReplace = 0;
+  int tieBreakIndex = 0;
+
+  // If the range is empty, or if we've been asked to sort no
+  //   items, then return immediately.
+
+  if ((rangeLast < rangeFirst) || (how_many < 1)) {
+    return 0;
+  }
+
+  // If there is exactly one element, then again there is nothing
+  //   that need be done.
+
+  if (rangeLast == rangeFirst) {
+    return 1;
+  }
+
+  // If the range to be sorted is small, just do an insertion sort.
+
+  if (rangeLast - rangeFirst < 7) {
+    std::uniform_int_distribution<size_t> distribution(0,
+                                                       rangeLast - rangeFirst);
+    high = rangeFirst + 1;
+    tieBreakIndex = indexList[distribution(rand_)];
+
+    // The outer while loop considers each item in turn (starting
+    //   with the second item in the range), for insertion into
+    //   the sorted list of items that precedes it.
+
+    while (high <= rangeLast) {
+      // Copy the next item to be inserted, as the "pivot".
+      // Start the insertion tests with its immediate predecessor.
+
+      pivotDist = distList[high];
+      pivotIndex = indexList[high];
+      low = high - 1;
+
+      // Work our way down through previously-sorted items
+      //   towards the start of the range.
+
+      while (low >= rangeFirst) {
+        // Compare the item to be inserted (the "pivot") with
+        //   the current item.
+
+        if (distList[low] < pivotDist) {
+          // The current item precedes the pivot in the sorted order.
+          // Break out of the loop - we have found the insertion point.
+
+          break;
+        } else if (distList[low] > pivotDist) {
+          // The current item follows the pivot in the sorted order.
+          // Shift the current item one spot upwards, to make room
+          //   for inserting the pivot below it.
+
+          distList[low + 1] = distList[low];
+          indexList[low + 1] = indexList[low];
+          low--;
+        } else {
+          if (indexList[low] != pivotIndex) {
+            // The items have the same sort value but are not identical.
+            // Break the tie pseudo-randomly.
+
+            if (((tieBreakIndex >= pivotIndex) &&
+                 ((indexList[low] < pivotIndex) ||
+                  (tieBreakIndex < indexList[low]))) ||
+                ((tieBreakIndex < pivotIndex) &&
+                 ((indexList[low] < pivotIndex) &&
+                  (tieBreakIndex < indexList[low])))) {
+              // The current item precedes the pivot in the sorted order.
+              // Break out of the loop - we have found the insertion point.
+
+              break;
+            } else {
+              // The current item follows the pivot in the sorted order.
+              // Shift the current item one spot upwards, to make room
+              //   for inserting the pivot below it.
+
+              distList[low + 1] = distList[low];
+              indexList[low + 1] = indexList[low];
+              low--;
+            }
+          } else {
+            // Oh no!
+            // We opened up an empty slot for the pivot,
+            //   only to find that it's a duplicate of the current item!
+            // Close the slot up again, and eliminate the duplicate.
+
+            for (i = low + 1; i < high; i++) {
+              distList[i] = distList[i + 1];
+              indexList[i] = indexList[i + 1];
+            }
+
+            // To eliminate the duplicate, overwrite its location with the
+            //   item from the end of the range, and then shrink the range
+            //   by one.
+
+            distList[high] = distList[rangeLast];
+            indexList[high] = indexList[rangeLast];
+            rangeLast--;
+
+            // The next iteration must not advance "high", since we've
+            //   just put a new element into it which needs to be processed.
+            // Decrementing it here will cancel out with the incrementation
+            //   of the next iteration.
+
+            high--;
+
+            // When we break the loop, the pivot element will be put
+            //   in its proper place ("low" + 1)
+            // Here, the proper place is where rangeLast used to be.
+            // To achieve this, we need to adjust "low" here.
+
+            low = rangeLast;
+
+            break;
+          }
+        }
+      }
+
+      // If we've made it to here, we've found the insertion
+      //   spot for the current element.
+      // Perform the insertion.
+
+      low++;
+      distList[low] = pivotDist;
+      indexList[low] = pivotIndex;
+
+      // Move to the next item to be inserted in the growing sorted list.
+
+      high++;
+    }
+
+    // Return the number of sorted items found.
+
+    num_found = rangeLast - rangeFirst + 1;
+
+    if (num_found > how_many) {
+      num_found = how_many;
+    }
+
+    return num_found;
+  }
+
+  // The range to be sorted is large, so do a partial quicksort.
+  // Select a pivot item, and swap it with the item at the beginning
+  //   of the range.
+
+  std::uniform_int_distribution<size_t> distribution(0, rangeLast - rangeFirst);
+  pivotLoc = rangeFirst + distribution(rand_);
+  tieBreakIndex = indexList[distribution(rand_)];
+
+  pivotDist = distList[pivotLoc];
+  distList[pivotLoc] = distList[rangeFirst];
+  distList[rangeFirst] = pivotDist;
+
+  pivotIndex = indexList[pivotLoc];
+  indexList[pivotLoc] = indexList[rangeFirst];
+  indexList[rangeFirst] = pivotIndex;
+
+  // Eliminate all duplicates of the pivot.
+  // Any duplicates found are pushed to the end of the range, and
+  //   the range shrunk by one (thereby excluding them).
+
+  i = rangeFirst + 1;
+
+  while (i <= rangeLast) {
+    if ((pivotIndex == indexList[i]) && (pivotDist == distList[i])) {
+      distList[i] = distList[rangeLast];
+      indexList[i] = indexList[rangeLast];
+      rangeLast--;
+    } else {
+      i++;
+    }
+  }
+
+  // Partition the remaining items with respect to the pivot.
+  // This efficient method is adapted from the one outlined in
+  //   Cormen, Leiserson & Rivest.
+  // The range is scanned from both ends.
+  // Items with small distances are placed below "low", and those
+  //   with large distances are placed above "high".
+  // Where "low" and "high" meet, the pivot item is inserted.
+
+  low = rangeFirst;
+  high = rangeLast + 1;
+
+  while (TRUE) {
+    // Move the "high" endpoint down until it meets either the pivot,
+    //   or something that belongs on the "low" side.
+    // If the key values are tied, decide pseudo-randomly.
+
+    do {
+      high--;
+    } while ((distList[high] > pivotDist) ||
+             ((distList[high] == pivotDist) && (high > low) &&
+              (((tieBreakIndex >= pivotIndex) &&
+                ((pivotIndex < indexList[high]) &&
+                 (indexList[high] <= tieBreakIndex))) ||
+               ((tieBreakIndex < pivotIndex) &&
+                ((pivotIndex < indexList[high]) ||
+                 (indexList[high] <= tieBreakIndex))))));
+
+    // Move the "low" endpoint up until it meets either the "high" endpoint,
+    //   or something that belongs on the "high" side.
+    // If the key values are tied, decide pseudo-randomly.
+
+    do {
+      low++;
+    } while ((low < high) && ((distList[low] < pivotDist) ||
+                              ((distList[low] == pivotDist) &&
+                               (((tieBreakIndex >= pivotIndex) &&
+                                 ((indexList[low] <= pivotIndex) ||
+                                  (tieBreakIndex < indexList[low]))) ||
+                                ((tieBreakIndex < pivotIndex) &&
+                                 ((indexList[low] <= pivotIndex) &&
+                                  (tieBreakIndex < indexList[low])))))));
+
+    // Have the "low" and "high" endpoints crossed?
+    // If not, we still have more work to do.
+
+    if (low < high) {
+      // Swap the misplaced items, and try again.
+
+      tempDist = distList[low];
+      distList[low] = distList[high];
+      distList[high] = tempDist;
+
+      tempIndex = indexList[low];
+      indexList[low] = indexList[high];
+      indexList[high] = tempIndex;
+    } else {
+      // We found the cross-over point.
+
+      break;
+    }
+  }
+
+  // The pivot value ends up at the location referenced by "high".
+  // Swap it with the pivot (which resides at the beginning of the range).
+
+  distList[rangeFirst] = distList[high];
+  distList[high] = pivotDist;
+
+  indexList[rangeFirst] = indexList[high];
+  indexList[high] = pivotIndex;
+
+  pivotLoc = high;
+
+  // The partition is complete.
+  // Recursively sort the items with smaller distance.
+
+  num_found =
+      PartialQuickSort(how_many, distList, indexList, rangeFirst, pivotLoc - 1);
+
+  // If we found enough items (including the pivot), then we are done.
+  // Make sure the pivot is in its correct position, if it is used.
+
+  if (num_found >= how_many - 1) {
+    if (num_found == how_many - 1) {
+      distList[rangeFirst + num_found] = pivotDist;
+      indexList[rangeFirst + num_found] = pivotIndex;
+    }
+
+    return how_many;
+  }
+
+  // We didn't find enough items, even taking the pivot into account.
+  // Were any duplicates discovered during this call?
+
+  if (num_found < pivotLoc - rangeFirst) {
+    // Duplicates were discovered!
+    // Figure out the minimum number of duplicates that must be
+    //   replaced by items from the end of the range in order to
+    //   leave the non-duplicates in contiguous locations.
+
+    numDuplicatesToReplace = pivotLoc - rangeFirst - num_found;
+    high = rangeLast;
+
+    if (numDuplicatesToReplace > rangeLast - pivotLoc) {
+      numDuplicatesToReplace = rangeLast - pivotLoc;
+      rangeLast = rangeFirst + num_found + numDuplicatesToReplace;
+    } else {
+      rangeLast -= numDuplicatesToReplace;
+    }
+
+    // Replace the required number of duplicates by items from
+    //   the end of the range.
+    // The size of the range will shrink as a result.
+
+    low = rangeFirst + num_found + 1;
+
+    for (i = 0; i < numDuplicatesToReplace; i++) {
+      distList[low] = distList[high];
+      indexList[low] = indexList[high];
+      low++;
+      high--;
+    }
+  }
+
+  // Put the pivot element in its proper place.
+
+  distList[rangeFirst + num_found] = pivotDist;
+  indexList[rangeFirst + num_found] = pivotIndex;
+
+  // Finish up by sorting larger-distance items.
+  // Note that the number of sorted items needed has dropped.
+
+  return num_found + 1 + PartialQuickSort(how_many - num_found - 1, distList,
+                                          indexList, rangeFirst + num_found + 1,
+                                          rangeLast);
 }
 
 }  // namespace rct
@@ -179,16 +744,16 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-// #ifndef RCT_NONE_
-// #define RCT_NONE_ (-1)
+// #ifndef kNone
+// #define kNone (-1)
 // #endif
 
-// #ifndef RCT_UNKNOWN_
-// #define RCT_UNKNOWN_ (-1.0F)
+// #ifndef kUnknown
+// #define kUnknown (-1.0F)
 // #endif
 
-// #ifndef RCT_VERSION_
-// #define RCT_VERSION_ ("1.0")
+// #ifndef kVersion
+// #define kVersion ("1.0")
 // #endif
 
 // /*!
@@ -196,11 +761,11 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //  *
 //  * @note Must be called before construction.
 //  *
-//  * @param sampleRate The desired sample rate.
+//  * @param sample_rate_ The desired sample rate.
 //  */
 // _RCT_TMPL_DECL
-// void RCT::setSampleRate(const float& sampleRate) {
-//   (*this).sampleRate = sampleRate;
+// void RCT::setSampleRate(const float& sample_rate_) {
+//   (*this).sample_rate_ = sample_rate_;
 // }
 
 // /*!
@@ -210,13 +775,13 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 // RCT::RCT(const unsigned long& seed) : seed(seed) {
 //   data = NULL;
 //   size = 0;
-//   maxParents = 1;
-//   maxDegree = 0;
+//   max_parents_ = 1;
+//   max_degree_ = 0;
 //   avgDegree = 0.0F;
-//   internToExternMapping = NULL;
+//   intern_to_extern_mapping_ = NULL;
 //   levelSetSizeList = NULL;
 //   levels = 0;
-//   numNodes = 0;
+//   num_nodes_ = 0;
 //   parentIndexLLList = NULL;
 //   parentLSizeLList = NULL;
 //   childIndexLLList = NULL;
@@ -224,7 +789,7 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //   query = NULL;
 //   distFromQueryList = NULL;
 //   storedDistIndexList = NULL;
-//   numStoredDists = 0;
+//   num_stored_dists_ = 0;
 //   numDistComps = 0UL;
 //   levelQuotaList = NULL;
 //   coverageParameter = 1.0f;
@@ -233,12 +798,12 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //   visitedNodeIndexList = NULL;
 //   tempResultIndexList = NULL;
 //   tempResultDistList = NULL;
-//   queryResultSize = 0;
-//   queryResultSampleSize = 0;
+//   query_result_size_ = 0;
+//   query_result_sample_size_ = 0;
 //   verbosity = 0;
 //   coverageParameter = 1.0f;
-//   sampleRate = 2.0f;
-//   buildScaleFactor = RCT_UNKNOWN_;
+//   sample_rate_ = 2.0f;
+//   buildScaleFactor = kUnknown;
 //   rand_.seed(seed);
 // }
 
@@ -252,9 +817,9 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //   int lvl;
 //   int tempLength = 0;
 //   data = NULL;
-//   if (internToExternMapping != NULL) {
-//     delete[] internToExternMapping;
-//     internToExternMapping = NULL;
+//   if (intern_to_extern_mapping_ != NULL) {
+//     delete[] intern_to_extern_mapping_;
+//     intern_to_extern_mapping_ = NULL;
 //   }
 
 //   if (parentIndexLLList != NULL) {
@@ -399,7 +964,7 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //   float inAvgDegree = 0.0f;
 //   float inCoverageParameter = 0.0f;
 //   float inBuildScaleFactor = 0.0f;
-//   int numChildren = 0;
+//   int num_children = 0;
 //   int* childList = NULL;
 //   ifstream inFile;
 //   int levelSetSize = 0;
@@ -460,9 +1025,9 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //   // Assign properties.
 //   size = inSize;
 //   levels = inLevels;
-//   numNodes = inNumNodes;
-//   maxParents = inMaxParents;
-//   maxDegree = inMaxDegree;
+//   num_nodes_ = inNumNodes;
+//   max_parents_ = inMaxParents;
+//   max_degree_ = inMaxDegree;
 //   avgDegree = inAvgDegree;
 //   coverageParameter = inCoverageParameter;
 //   buildScaleFactor = inBuildScaleFactor;
@@ -502,15 +1067,15 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //         inFile.close();
 //         return 0;
 //       }
-//       inFile >> internToExternMapping[i] >> numChildren;
-//       if (numChildren > 0) {
-//         childList = new int[numChildren];
+//       inFile >> intern_to_extern_mapping_[i] >> num_children;
+//       if (num_children > 0) {
+//         childList = new int[num_children];
 //       } else {
 //         childList = NULL;
 //       }
 //       childIndexLLList[lvl][i] = childList;
-//       childLSizeLList[lvl][i] = numChildren;
-//       for (j = 0; j < numChildren; j++) {
+//       childLSizeLList[lvl][i] = num_children;
+//       for (j = 0; j < num_children; j++) {
 //         inFile >> childList[j];
 //       }
 //       getline(inFile, buffer);
@@ -521,16 +1086,16 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 
 // /*!
 //  * Perform an approximate nearest-neighbor query for the specified item. The
-//  * number of desired nearest neighbors <code>howMany</code> (default 1)
+//  * number of desired nearest neighbors <code>how_many</code> (default 1)
 //  * can be specified. The search is relative to the random level
-//  * sampleLevel (default is 0, i.e. the complete
-//  * data set). The method also makes use of a parameter (<code>scaleFactor
+//  * sample_level (default is 0, i.e. the complete
+//  * data set). The method also makes use of a parameter (<code>coverage
 //  * </code>) that influences the trade-off between time and accuracy.
 //  *
-//  * @param scaleFactor Additional search efforts.
+//  * @param coverage Additional search efforts.
 //  * @param query The query location.
-//  * @param howMany The desired number of neighbors.
-//  * @param sampleLevel The sample level with respect to which the query is
+//  * @param how_many The desired number of neighbors.
+//  * @param sample_level The sample level with respect to which the query is
 //  *                    performed.
 //  *
 //  * @return The number of elements actually found.
@@ -542,34 +1107,34 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //  *       increasing order of their distances to the query.
 //  */
 // _RCT_TMPL_DECL
-// int RCT::findNear(DistData* query, const int& howMany, const float&
-// scaleFactor,
-//                   const int& sampleLevel) {
-//   queryResultSize = 0;
-//   queryResultSampleSize = 0;
+// int RCT::findNear(DistData* query, const int& how_many, const float&
+// coverage,
+//                   const int& sample_level) {
+//   query_result_size_ = 0;
+//   query_result_sample_size_ = 0;
 //   numDistComps = 0UL;
-//   if ((size <= 0) || (query == NULL) || (howMany <= 0) || (sampleLevel < 0)
+//   if ((size <= 0) || (query == NULL) || (how_many <= 0) || (sample_level < 0)
 //   ||
-//       ((sampleLevel >= levels) && (size > 1)) || (scaleFactor <= 0.0F)) {
+//       ((sample_level >= levels) && (size > 1)) || (coverage <= 0.0F)) {
 //     if (verbosity > 0) {
 //       LOG(ERROR) << "Invalid argument(s).";
 //     }
 //     return 0;
 //   }
 //   setNewQuery(query);
-//   return doFindNear(howMany, sampleLevel, scaleFactor);
+//   return doFindNear(how_many, sample_level, coverage);
 // }
 
 // /*!
 //  * Perform an exact nearest-neighbor query for the specified item. The
-//  * number of desired nearest neighbors <code>howMany</code> (default 1)
+//  * number of desired nearest neighbors <code>how_many</code> (default 1)
 //  * can be specified. The search is relative to the random level
-//  * sampleLevel (default is 0, i.e. the complete
+//  * sample_level (default is 0, i.e. the complete
 //  * data set).
 //  *
 //  * @param query The query location.
-//  * @param howMany The desired number of neighbors.
-//  * @param sampleLevel The sample level with respect to which the query is
+//  * @param how_many The desired number of neighbors.
+//  * @param sample_level The sample level with respect to which the query is
 //  *                    performed.
 //  *
 //  * @return The number of elements actually found.
@@ -581,26 +1146,26 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //  *       increasing order of their distances to the query.
 //  */
 // _RCT_TMPL_DECL
-// int RCT::findNearest(DistData* query, const int& howMany,
-//                      const int& sampleLevel) {
-//   queryResultSize = 0;
-//   queryResultSampleSize = 0;
+// int RCT::findNearest(DistData* query, const int& how_many,
+//                      const int& sample_level) {
+//   query_result_size_ = 0;
+//   query_result_sample_size_ = 0;
 //   numDistComps = 0UL;
-//   if ((size <= 0) || (query == NULL) || (howMany <= 0) || (sampleLevel < 0)
+//   if ((size <= 0) || (query == NULL) || (how_many <= 0) || (sample_level < 0)
 //   ||
-//       ((sampleLevel >= levels) && (size > 1))) {
+//       ((sample_level >= levels) && (size > 1))) {
 //     if (verbosity > 0) {
 //       LOG(ERROR) << "Invalid argument(s).";
 //     }
 //     return 0;
 //   }
 //   setNewQuery(query);
-//   return doFindNearest(howMany, sampleLevel);
+//   return doFindNearest(how_many, sample_level);
 // }
 
 // /*!
 //  * Retrieve the average degree of a node in the RCT. This value is roughly
-//  * equal to sampleRate.
+//  * equal to sample_rate_.
 //  *
 //  * @return The average degree of a node in the RCT.
 //  */
@@ -660,7 +1225,7 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //     return 0;
 //   }
 //   for (i = 0; i < size; i++) {
-//     result[internToExternMapping[i]] = i;
+//     result[intern_to_extern_mapping_[i]] = i;
 //   }
 //   return size;
 // }
@@ -686,7 +1251,7 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //     return 0;
 //   }
 //   for (i = 0; i < size; i++) {
-//     result[i] = internToExternMapping[i];
+//     result[i] = intern_to_extern_mapping_[i];
 //   }
 //   return size;
 // }
@@ -724,7 +1289,7 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //  * @return The degree of the node with the largest number of children.
 //  */
 // _RCT_TMPL_DECL
-// int RCT::getMaxDegree() const { return maxDegree; }
+// int RCT::getMaxDegree() const { return max_degree_; }
 
 // /*!
 //  * Fills the supplied list with the mapping from external item indices to
@@ -749,10 +1314,10 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //   }
 //   for (lvl = 0; lvl < levels; lvl++) {
 //     for (i = levelSetSizeList[lvl + 1]; i < levelSetSizeList[lvl]; i++) {
-//       result[internToExternMapping[i]] = lvl;
+//       result[intern_to_extern_mapping_[i]] = lvl;
 //     }
 //   }
-//   result[internToExternMapping[0]] = levels;
+//   result[intern_to_extern_mapping_[0]] = levels;
 //   return size;
 // }
 
@@ -763,7 +1328,7 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //  * @return The maxmimum number of allowed parents per node.
 //  */
 // _RCT_TMPL_DECL
-// int RCT::getMaxParents() const { return maxParents; }
+// int RCT::getMaxParents() const { return max_parents_; }
 
 // /*!
 //  * Retrieve the number of data items stored in the RCT.
@@ -796,7 +1361,7 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //  * @return The number of nodes in the RCt.
 //  */
 // _RCT_TMPL_DECL
-// int RCT::getNumNodes() const { return numNodes; }
+// int RCT::getNumNodes() const { return num_nodes_; }
 
 // /*!
 //  * Computes the recall accuracy of the most recent query result. A list of
@@ -813,22 +1378,22 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //  * @return If unsuccessful, a negative value is returned.
 //  */
 // _RCT_TMPL_DECL
-// float RCT::getResultAcc(float* exactDistList, int howMany) const {
+// float RCT::getResultAcc(float* exactDistList, int how_many) const {
 //   int i;
 //   int loc = 0;
-//   if ((exactDistList == NULL) || (howMany < queryResultSize)) {
+//   if ((exactDistList == NULL) || (how_many < query_result_size_)) {
 //     if (verbosity > 0) {
 //       LOG(ERROR) << "Exact distance list is too small.";
 //     }
-//     return RCT_UNKNOWN_;
+//     return kUnknown;
 //   }
-//   for (i = 0; i < howMany; i++) {
-//     if ((loc < queryResultSize) &&
+//   for (i = 0; i < how_many; i++) {
+//     if ((loc < query_result_size_) &&
 //         (queryResultDistList[loc] <= exactDistList[i])) {
 //       loc++;
 //     }
 //   }
-//   return ((float)loc) / howMany;
+//   return ((float)loc) / how_many;
 // }
 
 // /*!
@@ -844,16 +1409,16 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 // _RCT_TMPL_DECL
 // int RCT::getResultDists(float* result, int capacity) const {
 //   int i;
-//   if ((result == NULL) || (capacity < queryResultSize)) {
+//   if ((result == NULL) || (capacity < query_result_size_)) {
 //     if (verbosity > 0) {
 //       LOG(ERROR) << "Result list capacity is too small.";
 //     }
 //     return 0;
 //   }
-//   for (i = 0; i < queryResultSize; i++) {
+//   for (i = 0; i < query_result_size_; i++) {
 //     result[i] = queryResultDistList[i];
 //   }
-//   return queryResultSize;
+//   return query_result_size_;
 // }
 
 // /*!
@@ -878,16 +1443,16 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 // _RCT_TMPL_DECL
 // int RCT::getResultIndices(int* result, int capacity) const {
 //   int i;
-//   if ((result == NULL) || (capacity < queryResultSize)) {
+//   if ((result == NULL) || (capacity < query_result_size_)) {
 //     if (verbosity > 0) {
 //       LOG(ERROR) << "Result list capacity is too small.";
 //     }
 //     return 0;
 //   }
-//   for (i = 0; i < queryResultSize; i++) {
-//     result[i] = internToExternMapping[queryResultIndexList[i]];
+//   for (i = 0; i < query_result_size_; i++) {
+//     result[i] = intern_to_extern_mapping_[queryResultIndexList[i]];
 //   }
-//   return queryResultSize;
+//   return query_result_size_;
 // }
 
 // /*!
@@ -896,7 +1461,7 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //  * @return Number of results found in the most recent query.
 //  */
 // _RCT_TMPL_DECL
-// int RCT::getResultNumFound() const { return queryResultSize; }
+// int RCT::getResultNumFound() const { return query_result_size_; }
 
 // /*!
 //  * Returns the sample size used in the most recent query.
@@ -904,7 +1469,7 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //  * @return Sample size used in the most recent query.
 //  */
 // _RCT_TMPL_DECL
-// int RCT::getResultSampleSize() const { return queryResultSampleSize; }
+// int RCT::getResultSampleSize() const { return query_result_sample_size_; }
 
 // /*!
 //  * Retrieve the seed value used to initialize the random number generator.
@@ -934,7 +1499,7 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //   int i;
 //   int j;
 //   int lvl;
-//   int numChildren = 0;
+//   int num_children = 0;
 //   int* childList = NULL;
 //   ofstream outFile;
 //   int levelSetSize = 0;
@@ -969,13 +1534,13 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 
 //   // Begin writing to the output file. First, write a comment identifying the
 //   // RCT version and the output file name.
-//   outFile << "%% RCT " << RCT_VERSION_ << ' ' << fileName << endl;
+//   outFile << "%% RCT " << kVersion << ' ' << fileName << endl;
 
 //   // Write the main RCT parameters.
-//   outFile << "%% size levels numNodes maxParents maxDegree avgDegree ";
+//   outFile << "%% size levels num_nodes_ max_parents_ max_degree_ avgDegree ";
 //   outFile << "coverageParameter buildScaleFactor seed" << endl;
-//   outFile << size << ' ' << levels << ' ' << numNodes << ' ';
-//   outFile << maxParents << ' ' << maxDegree << ' ' << avgDegree;
+//   outFile << size << ' ' << levels << ' ' << num_nodes_ << ' ';
+//   outFile << max_parents_ << ' ' << max_degree_ << ' ' << avgDegree;
 //   outFile << ' ' << coverageParameter << ' ' << buildScaleFactor;
 //   outFile << ' ' << seed << endl;
 
@@ -992,15 +1557,15 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //   //   the index of the item in the original input list,
 //   //   the number of children of the item,
 //   //   and a list of the indices of the children.
-//   outFile << "%% level nodeID origItemID numChildren c_0 c_1 ..." << endl;
+//   outFile << "%% level nodeID origItemID num_children c_0 c_1 ..." << endl;
 //   for (lvl = levels; lvl >= 0; lvl--) {
 //     levelSetSize = levelSetSizeList[lvl];
 //     for (i = 0; i < levelSetSize; i++) {
-//       numChildren = childLSizeLList[lvl][i];
+//       num_children = childLSizeLList[lvl][i];
 //       childList = childIndexLLList[lvl][i];
-//       outFile << lvl << ' ' << i << ' ' << internToExternMapping[i];
-//       outFile << ' ' << numChildren;
-//       for (j = 0; j < numChildren; j++) {
+//       outFile << lvl << ' ' << i << ' ' << intern_to_extern_mapping_[i];
+//       outFile << ' ' << num_children;
+//       for (j = 0; j < num_children; j++) {
 //         outFile << ' ' << childList[j];
 //       }
 //       outFile << endl;
@@ -1054,11 +1619,11 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //  */
 // _RCT_TMPL_DECL
 // float RCT::computeDistFromQuery(int itemIndex) {
-//   if (distFromQueryList[itemIndex] == RCT_UNKNOWN_) {
+//   if (distFromQueryList[itemIndex] == kUnknown) {
 //     distFromQueryList[itemIndex] =
-//         query->distanceTo(data[internToExternMapping[itemIndex]]);
-//     storedDistIndexList[numStoredDists] = itemIndex;
-//     numStoredDists++;
+//         query->distanceTo(data_[intern_to_extern_mapping_[itemIndex]]);
+//     storedDistIndexList[num_stored_dists_] = itemIndex;
+//     num_stored_dists_++;
 //     numDistComps++;
 //   }
 //   return distFromQueryList[itemIndex];
@@ -1067,656 +1632,150 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 // /*!
 //  * Builds an RCT on items in the first locations of the scrambled data array.
 //  */
-// _RCT_TMPL_DECL
-// void RCT::doBuild() {
-//   int i = 0;
-//   int j = 0;
-//   int lvl = 0;
-//   int numLowerItems = 0;
-//   int numUpperItems = 0;
-//   int parent = 0;
-//   int child = 0;
-//   int childLSize = 0;
-//   int offset = 0;
-//   long int totalDegree = 0L;
-
-//   // Build the top level of the RCT as a special case.
-//   // Treat the first array item as the root.
-//   parentLSizeLList[levels][0] = 0;
-//   parentIndexLLList[levels][0] = NULL;
-
-//   // Explicitly connect all other items as children of the root,
-//   //   if they exist.
-//   // Don't bother sorting the children according to distance from
-//   //   the root.
-//   numLowerItems = levelSetSizeList[levels - 1];
-//   childLSizeLList[levels][0] = numLowerItems;
-//   childIndexLLList[levels][0] = new int[numLowerItems];
-//   maxDegree = numLowerItems;
-//   totalDegree = (long int)numLowerItems;
-
-//   for (i = 0; i < numLowerItems; i++) {
-//     childIndexLLList[levels][0][i] = i;
-//   }
-
-//   if (verbosity >= 2) {
-//     printf("RCT root level constructed.\n");
-//     fflush(NULL);
-//   }
-
-//   for (lvl = levels - 2; lvl >= 0; lvl--) {
-//     numUpperItems = levelSetSizeList[lvl + 1];
-//     numLowerItems = levelSetSizeList[lvl];
-
-//     // We now want to connect the bottom level of the
-//     //   current RCT (level lvl+1) to the items at
-//     //   this level (level lvl).
-
-//     // For each item at this level, generate a set of
-//     //   parents from the bottom level of the current RCT.
-//     // Also, temporarily store (in "childLSizeLList") the number of times
-//     //   each node is requested as a parent.
-//     for (child = 0; child < numLowerItems; child++) {
-//       if ((child % 5000 == 4999) && (verbosity >= 2)) {
-//         printf("Inserting item %d (out of %d) at level %d...\n", child + 1,
-//                size, lvl);
-//         fflush(NULL);
-//       }
-
-//       // Find some parents for the current child.
-//       // If only one parent is requested and the child has a copy
-//       //   at the level above, then just choose it directly.
-//       // Otherwise, do a search.
-
-//       if ((child < numUpperItems) && (maxParents == 1)) {
-//         queryResultSize = 1;
-//         queryResultIndexList[0] = child;
-//       } else {
-//         setNewQuery(data[internToExternMapping[child]]);
-
-//         if (buildScaleFactor <= 0.0F) {
-//           doFindNearest(maxParents, lvl + 1);
-//         } else {
-//           doFindNear(maxParents, lvl + 1, buildScaleFactor);
-//         }
-//       }
-
-//       // Connect links from child to parents.
-//       // If a copy of the child also exists at the upper level,
-//       //   then make sure that it is listed as the first parent.
-
-//       parentLSizeLList[lvl][child] = queryResultSize;
-//       parentIndexLLList[lvl][child] = new int[maxParents];
-
-//       if ((child < numUpperItems) && (queryResultIndexList[0] != child)) {
-//         // The first query result should have been a copy of the
-//         //   child, but wasn't.
-//         // Repair this situation by explicitly placing a copy of the child
-//         //   at the head of the list, and shifting the remaining query
-//         //   result elements to accommodate the child copy.
-
-//         offset = 1;
-//         parentIndexLLList[lvl][child][0] = child;
-//         childLSizeLList[lvl + 1][child]++;
-//       } else {
-//         // Either the query result contains a copy of the child at its
-//         //   head, or the child isn't supposed to appear in the
-//         //   query result anyway.
-
-//         offset = 0;
-//         parentIndexLLList[lvl][child][0] = queryResultIndexList[0];
-//         childLSizeLList[lvl + 1][queryResultIndexList[0]]++;
-//       }
-
-//       for (i = 1; i < queryResultSize; i++) {
-//         // Apply an offset shift only until a copy of the child is found
-//         //   (one may not necessarily be found).
-//         // This is to avoid picking up this copy more than once.
-
-//         if (queryResultIndexList[i] == child) {
-//           offset = 0;
-//         } else {
-//           parentIndexLLList[lvl][child][i] = queryResultIndexList[i -
-//           offset];
-//           childLSizeLList[lvl + 1][queryResultIndexList[i - offset]]++;
-//         }
-//       }
-//     }
-
-//     // For each parent, reserve storage for its child lists.
-
-//     for (parent = 0; parent < numUpperItems; parent++) {
-//       childLSize = childLSizeLList[lvl + 1][parent];
-
-//       if (childLSize > 0) {
-//         childIndexLLList[lvl + 1][parent] =
-//             new int[childLSizeLList[lvl + 1][parent]];
-//         childLSizeLList[lvl + 1][parent] = 0;
-
-//         totalDegree += (long int)childLSize;
-
-//         if (childLSize > maxDegree) {
-//           maxDegree = childLSize;
-//         }
-//       }
-//     }
-
-//     // Construct child lists for each of the parents,
-//     //   by reversing the child-to-parent edges.
-//     // Since the child-to-parent edges are no longer needed,
-//     //   delete them.
-
-//     for (child = 0; child < numLowerItems; child++) {
-//       for (i = parentLSizeLList[lvl][child] - 1; i >= 0; i--) {
-//         parent = parentIndexLLList[lvl][child][i];
-//         j = childLSizeLList[lvl + 1][parent];
-//         childIndexLLList[lvl + 1][parent][j] = child;
-//         childLSizeLList[lvl + 1][parent]++;
-//       }
-
-//       if (parentLSizeLList[lvl][child] > 0) {
-//         delete[] parentIndexLLList[lvl][child];
-//         parentIndexLLList[lvl][child] = NULL;
-//         parentLSizeLList[lvl][child] = 0;
-//       }
-//     }
-
-//     // The RCT has grown by one level.
-//     if (verbosity >= 2) {
-//       LOG(INFO) << "RCT level " << lvl << " constructed.";
-//     }
-//   }
-
-//   avgDegree = (float)(((double)totalDegree) / (numNodes - size));
-// }
 
 // /*!
 //  * Perform an approximate nearest-neighbor query for the specified item. The
-//  * number of desired nearest neighbors <code>howMany</code> must be
+//  * number of desired nearest neighbors <code>how_many</code> must be
 //  specified.
-//  * The search is relative to the random level sampleLevel.
+//  * The search is relative to the random level sample_level.
 //  *
-//  * @param scaleFactor Additional search efforts.
-//  * @param howMany The desired number of neighbors.
-//  * @param sampleLevel The sample level with respect to which the query is
+//  * @param coverage Additional search efforts.
+//  * @param how_many The desired number of neighbors.
+//  * @param sample_level The sample level with respect to which the query is
 //  *                    performed.
 //  *
 //  * @return The number of elements actually found.
 //  */
 // _RCT_TMPL_DECL
-// int RCT::doFindNear(int howMany, int sampleLevel, float scaleFactor) {
+// int RCT::doFindNear(int how_many, int sample_level, float coverage) {
 //   int i;
 //   int j;
 //   int lvl;
 //   int child = 0;
-//   int nodeIndex = 0;
-//   int numChildren = 0;
+//   int node_index = 0;
+//   int num_children = 0;
 //   // int tempQueryResultSize = 0;
-//   double varQuota = 0.0F;
-//   int numFound = 0;
-//   int numRetained = 0;
+//   double var_quota = 0.0F;
+//   int num_found = 0;
+//   int num_retained = 0;
 //   int* childList = NULL;
 
 //   // Compute quota of items to be retained at every level.
 //   // Rank cover tree rules.levelQuotaList
-//   varQuota = (double)howMany;
-//   for (lvl = sampleLevel; lvl < levels; lvl++) {
+//   var_quota = (double)how_many;
+//   for (lvl = sample_level; lvl < levels; lvl++) {
 //     levelQuotaList[lvl] =
-//         (int)((scaleFactor * varQuota * coverageParameter) + 0.999999F);
-//     if (levelQuotaList[lvl] < scaleFactor * coverageParameter) {
+//         (int)((coverage * var_quota * coverageParameter) + 0.999999F);
+//     if (levelQuotaList[lvl] < coverage * coverageParameter) {
 //       levelQuotaList[lvl] =
-//           (int)((scaleFactor * coverageParameter) + 0.999999F);
+//           (int)((coverage * coverageParameter) + 0.999999F);
 //     }
-//     varQuota /= sampleRate;
+//     var_quota /= sample_rate_;
 //   }
-//   if (howMany > levelQuotaList[sampleLevel]) {
-//     levelQuotaList[sampleLevel] = howMany;
+//   if (how_many > levelQuotaList[sample_level]) {
+//     levelQuotaList[sample_level] = how_many;
 //   }
 
 //   // Load the root as the tentative sole member of the query result list.
-//   queryResultSize = 0;
+//   query_result_size_ = 0;
 //   queryResultDistList[0] = computeDistFromQuery(0);
 //   queryResultIndexList[0] = 0;
-//   numRetained = 1;
+//   num_retained = 1;
 
 //   // From the root, search out other nodes to place in the query result.
-//   for (lvl = levels - 1; lvl >= sampleLevel; lvl--) {
+//   for (lvl = levels - 1; lvl >= sample_level; lvl--) {
 //     // For every node at the active level, load its children
 //     //   into the scratch list, and compute their distances to the query.
-//     numFound = 0;
+//     num_found = 0;
 
-//     for (i = 0; i < numRetained; i++) {
-//       nodeIndex = queryResultIndexList[i];
-//       numChildren = childLSizeLList[lvl + 1][nodeIndex];
-//       childList = childIndexLLList[lvl + 1][nodeIndex];
+//     for (i = 0; i < num_retained; i++) {
+//       node_index = queryResultIndexList[i];
+//       num_children = childLSizeLList[lvl + 1][node_index];
+//       childList = childIndexLLList[lvl + 1][node_index];
 
-//       for (j = 0; j < numChildren; j++) {
+//       for (j = 0; j < num_children; j++) {
 //         child = childList[j];
 
 //         if (visitedNodeIndexList[child] != TRUE) {
 //           visitedNodeIndexList[child] = TRUE;
-//           tempResultIndexList[numFound] = child;
-//           tempResultDistList[numFound] = computeDistFromQuery(child);
-//           numFound++;
+//           tempResultIndexList[num_found] = child;
+//           tempResultDistList[num_found] = computeDistFromQuery(child);
+//           num_found++;
 //         }
 //       }
 //     }
 
-//     for (i = 0; i < numFound; i++) {
+//     for (i = 0; i < num_found; i++) {
 //       visitedNodeIndexList[tempResultIndexList[i]] = FALSE;
 //     }
 
 //     // Extract the closest nodes from the list of accumulated children,
 //     //   and keep them as the tentative parents of the query.
 
-//     if (numFound > levelQuotaList[lvl]) {
-//       numRetained = levelQuotaList[lvl];
+//     if (num_found > levelQuotaList[lvl]) {
+//       num_retained = levelQuotaList[lvl];
 //     } else {
-//       numRetained = numFound;
+//       num_retained = num_found;
 //     }
 
-//     numRetained = partialQuickSort(numRetained, tempResultDistList,
-//                                    tempResultIndexList, 0, numFound - 1);
+//     num_retained = PartialQuickSort(num_retained, tempResultDistList,
+//                                    tempResultIndexList, 0, num_found - 1);
 
-//     for (i = 0; i < numRetained; i++) {
+//     for (i = 0; i < num_retained; i++) {
 //       queryResultIndexList[i] = tempResultIndexList[i];
 //       queryResultDistList[i] = tempResultDistList[i];
 //     }
 //   }
 
 //   // Select the final number of neighbors needed.
-//   if (numRetained > howMany) {
-//     queryResultSize = howMany;
+//   if (num_retained > how_many) {
+//     query_result_size_ = how_many;
 //   } else {
-//     queryResultSize = numRetained;
+//     query_result_size_ = num_retained;
 //   }
 //   childList = NULL;
-//   return queryResultSize;
+//   return query_result_size_;
 // }
 
 // /*!
 //  * Perform an exact nearest-neighbor query for the specified item. The
-//  * number of desired nearest neighbors <code>howMany</code> must be
+//  * number of desired nearest neighbors <code>how_many</code> must be
 //  specified.
-//  * The search is relative to the random level sampleLevel.
+//  * The search is relative to the random level sample_level.
 //  *
-//  * @param howMany The desired number of neighbors.
-//  * @param sampleLevel The sample level with respect to which the query is
+//  * @param how_many The desired number of neighbors.
+//  * @param sample_level The sample level with respect to which the query is
 //  *                    performed.
 //  *
 //  * @return The number of elements actually found.
 //  */
 // _RCT_TMPL_DECL
-// int RCT::doFindNearest(int howMany, int sampleLevel) {
+// int RCT::doFindNearest(int how_many, int sample_level) {
 //   int i;
 
 //   // Handle the singleton case separately.
 //   if (size == 1) {
-//     queryResultSize = 1;
+//     query_result_size_ = 1;
 //     queryResultDistList[0] = computeDistFromQuery(0);
 //     queryResultIndexList[0] = 0;
 
 //     return 1;
 //   }
 
-//   queryResultSize = levelSetSizeList[sampleLevel];
+//   query_result_size_ = levelSetSizeList[sample_level];
 
 //   // Compute distances from the current query to all items.
-//   for (i = 0; i < queryResultSize; i++) {
+//   for (i = 0; i < query_result_size_; i++) {
 //     queryResultDistList[i] = computeDistFromQuery(i);
 //     queryResultIndexList[i] = i;
 //   }
 
-//   queryResultSize =
-//       partialQuickSort(howMany, queryResultDistList, queryResultIndexList, 0,
-//                        queryResultSize - 1);
-
-//   return queryResultSize;
-// }
-
-// /*!
-//  * Sorts the smallest items in the supplied list ranges, in place, according
-//  to
-//  * distances. A partial quicksort is used to sort only the requested number
-//  * of items. The smallest items are placed at the beginning of the range, in
-//  * increasing order of distance.
-//  *
-//  * @note The remainder of the range can become corrupted by this operation!
-//  *
-//  * @param howMany Number of nearest items sought.
-//  * @param distList List of item distances.
-//  * @param indexList List of item indices.
-//  * @param rangeFirst First element in range.
-//  * @param rangeLast Last element in range.
-//  *
-//  * @return Number of items sorted.
-//  */
-// _RCT_TMPL_DECL
-// int RCT::partialQuickSort(int howMany, float* distList, int* indexList,
-//                           int rangeFirst, int rangeLast) {
-//   int i;
-//   int pivotLoc = 0;
-//   int pivotIndex = 0;
-//   float pivotDist = 0.0F;
-//   int tempIndex = 0;
-//   float tempDist = 0.0F;
-//   int low = 0;
-//   int high = 0;
-//   int numFound = 0;
-//   int numDuplicatesToReplace = 0;
-//   int tieBreakIndex = 0;
-
-//   // If the range is empty, or if we've been asked to sort no
-//   //   items, then return immediately.
-
-//   if ((rangeLast < rangeFirst) || (howMany < 1)) {
-//     return 0;
-//   }
-
-//   // If there is exactly one element, then again there is nothing
-//   //   that need be done.
-
-//   if (rangeLast == rangeFirst) {
-//     return 1;
-//   }
-
-//   // If the range to be sorted is small, just do an insertion sort.
-
-//   if (rangeLast - rangeFirst < 7) {
-//     std::uniform_int_distribution<size_t> distribution(0,
-//                                                        rangeLast -
-//                                                        rangeFirst);
-//     high = rangeFirst + 1;
-//     tieBreakIndex = indexList[distribution(rand_)];
-
-//     // The outer while loop considers each item in turn (starting
-//     //   with the second item in the range), for insertion into
-//     //   the sorted list of items that precedes it.
-
-//     while (high <= rangeLast) {
-//       // Copy the next item to be inserted, as the "pivot".
-//       // Start the insertion tests with its immediate predecessor.
-
-//       pivotDist = distList[high];
-//       pivotIndex = indexList[high];
-//       low = high - 1;
-
-//       // Work our way down through previously-sorted items
-//       //   towards the start of the range.
-
-//       while (low >= rangeFirst) {
-//         // Compare the item to be inserted (the "pivot") with
-//         //   the current item.
-
-//         if (distList[low] < pivotDist) {
-//           // The current item precedes the pivot in the sorted order.
-//           // Break out of the loop - we have found the insertion point.
-
-//           break;
-//         } else if (distList[low] > pivotDist) {
-//           // The current item follows the pivot in the sorted order.
-//           // Shift the current item one spot upwards, to make room
-//           //   for inserting the pivot below it.
-
-//           distList[low + 1] = distList[low];
-//           indexList[low + 1] = indexList[low];
-//           low--;
-//         } else {
-//           if (indexList[low] != pivotIndex) {
-//             // The items have the same sort value but are not identical.
-//             // Break the tie pseudo-randomly.
-
-//             if (((tieBreakIndex >= pivotIndex) &&
-//                  ((indexList[low] < pivotIndex) ||
-//                   (tieBreakIndex < indexList[low]))) ||
-//                 ((tieBreakIndex < pivotIndex) &&
-//                  ((indexList[low] < pivotIndex) &&
-//                   (tieBreakIndex < indexList[low])))) {
-//               // The current item precedes the pivot in the sorted order.
-//               // Break out of the loop - we have found the insertion point.
-
-//               break;
-//             } else {
-//               // The current item follows the pivot in the sorted order.
-//               // Shift the current item one spot upwards, to make room
-//               //   for inserting the pivot below it.
-
-//               distList[low + 1] = distList[low];
-//               indexList[low + 1] = indexList[low];
-//               low--;
-//             }
-//           } else {
-//             // Oh no!
-//             // We opened up an empty slot for the pivot,
-//             //   only to find that it's a duplicate of the current item!
-//             // Close the slot up again, and eliminate the duplicate.
-
-//             for (i = low + 1; i < high; i++) {
-//               distList[i] = distList[i + 1];
-//               indexList[i] = indexList[i + 1];
-//             }
-
-//             // To eliminate the duplicate, overwrite its location with the
-//             //   item from the end of the range, and then shrink the range
-//             //   by one.
-
-//             distList[high] = distList[rangeLast];
-//             indexList[high] = indexList[rangeLast];
-//             rangeLast--;
-
-//             // The next iteration must not advance "high", since we've
-//             //   just put a new element into it which needs to be processed.
-//             // Decrementing it here will cancel out with the incrementation
-//             //   of the next iteration.
-
-//             high--;
-
-//             // When we break the loop, the pivot element will be put
-//             //   in its proper place ("low" + 1)
-//             // Here, the proper place is where rangeLast used to be.
-//             // To achieve this, we need to adjust "low" here.
-
-//             low = rangeLast;
-
-//             break;
-//           }
-//         }
-//       }
-
-//       // If we've made it to here, we've found the insertion
-//       //   spot for the current element.
-//       // Perform the insertion.
-
-//       low++;
-//       distList[low] = pivotDist;
-//       indexList[low] = pivotIndex;
-
-//       // Move to the next item to be inserted in the growing sorted list.
-
-//       high++;
-//     }
-
-//     // Return the number of sorted items found.
-
-//     numFound = rangeLast - rangeFirst + 1;
-
-//     if (numFound > howMany) {
-//       numFound = howMany;
-//     }
-
-//     return numFound;
-//   }
-
-//   // The range to be sorted is large, so do a partial quicksort.
-//   // Select a pivot item, and swap it with the item at the beginning
-//   //   of the range.
-
-//   std::uniform_int_distribution<size_t> distribution(0, rangeLast -
-//   rangeFirst);
-//   pivotLoc = rangeFirst + distribution(rand_);
-//   tieBreakIndex = indexList[distribution(rand_)];
-
-//   pivotDist = distList[pivotLoc];
-//   distList[pivotLoc] = distList[rangeFirst];
-//   distList[rangeFirst] = pivotDist;
-
-//   pivotIndex = indexList[pivotLoc];
-//   indexList[pivotLoc] = indexList[rangeFirst];
-//   indexList[rangeFirst] = pivotIndex;
-
-//   // Eliminate all duplicates of the pivot.
-//   // Any duplicates found are pushed to the end of the range, and
-//   //   the range shrunk by one (thereby excluding them).
-
-//   i = rangeFirst + 1;
-
-//   while (i <= rangeLast) {
-//     if ((pivotIndex == indexList[i]) && (pivotDist == distList[i])) {
-//       distList[i] = distList[rangeLast];
-//       indexList[i] = indexList[rangeLast];
-//       rangeLast--;
-//     } else {
-//       i++;
-//     }
-//   }
-
-//   // Partition the remaining items with respect to the pivot.
-//   // This efficient method is adapted from the one outlined in
-//   //   Cormen, Leiserson & Rivest.
-//   // The range is scanned from both ends.
-//   // Items with small distances are placed below "low", and those
-//   //   with large distances are placed above "high".
-//   // Where "low" and "high" meet, the pivot item is inserted.
-
-//   low = rangeFirst;
-//   high = rangeLast + 1;
-
-//   while (TRUE) {
-//     // Move the "high" endpoint down until it meets either the pivot,
-//     //   or something that belongs on the "low" side.
-//     // If the key values are tied, decide pseudo-randomly.
-
-//     do {
-//       high--;
-//     } while ((distList[high] > pivotDist) ||
-//              ((distList[high] == pivotDist) && (high > low) &&
-//               (((tieBreakIndex >= pivotIndex) &&
-//                 ((pivotIndex < indexList[high]) &&
-//                  (indexList[high] <= tieBreakIndex))) ||
-//                ((tieBreakIndex < pivotIndex) &&
-//                 ((pivotIndex < indexList[high]) ||
-//                  (indexList[high] <= tieBreakIndex))))));
-
-//     // Move the "low" endpoint up until it meets either the "high" endpoint,
-//     //   or something that belongs on the "high" side.
-//     // If the key values are tied, decide pseudo-randomly.
-
-//     do {
-//       low++;
-//     } while ((low < high) && ((distList[low] < pivotDist) ||
-//                               ((distList[low] == pivotDist) &&
-//                                (((tieBreakIndex >= pivotIndex) &&
-//                                  ((indexList[low] <= pivotIndex) ||
-//                                   (tieBreakIndex < indexList[low]))) ||
-//                                 ((tieBreakIndex < pivotIndex) &&
-//                                  ((indexList[low] <= pivotIndex) &&
-//                                   (tieBreakIndex < indexList[low])))))));
-
-//     // Have the "low" and "high" endpoints crossed?
-//     // If not, we still have more work to do.
-
-//     if (low < high) {
-//       // Swap the misplaced items, and try again.
-
-//       tempDist = distList[low];
-//       distList[low] = distList[high];
-//       distList[high] = tempDist;
-
-//       tempIndex = indexList[low];
-//       indexList[low] = indexList[high];
-//       indexList[high] = tempIndex;
-//     } else {
-//       // We found the cross-over point.
-
-//       break;
-//     }
-//   }
-
-//   // The pivot value ends up at the location referenced by "high".
-//   // Swap it with the pivot (which resides at the beginning of the range).
-
-//   distList[rangeFirst] = distList[high];
-//   distList[high] = pivotDist;
-
-//   indexList[rangeFirst] = indexList[high];
-//   indexList[high] = pivotIndex;
-
-//   pivotLoc = high;
-
-//   // The partition is complete.
-//   // Recursively sort the items with smaller distance.
-
-//   numFound =
-//       partialQuickSort(howMany, distList, indexList, rangeFirst, pivotLoc -
-//       1);
-
-//   // If we found enough items (including the pivot), then we are done.
-//   // Make sure the pivot is in its correct position, if it is used.
-
-//   if (numFound >= howMany - 1) {
-//     if (numFound == howMany - 1) {
-//       distList[rangeFirst + numFound] = pivotDist;
-//       indexList[rangeFirst + numFound] = pivotIndex;
-//     }
-
-//     return howMany;
-//   }
-
-//   // We didn't find enough items, even taking the pivot into account.
-//   // Were any duplicates discovered during this call?
-
-//   if (numFound < pivotLoc - rangeFirst) {
-//     // Duplicates were discovered!
-//     // Figure out the minimum number of duplicates that must be
-//     //   replaced by items from the end of the range in order to
-//     //   leave the non-duplicates in contiguous locations.
-
-//     numDuplicatesToReplace = pivotLoc - rangeFirst - numFound;
-//     high = rangeLast;
-
-//     if (numDuplicatesToReplace > rangeLast - pivotLoc) {
-//       numDuplicatesToReplace = rangeLast - pivotLoc;
-//       rangeLast = rangeFirst + numFound + numDuplicatesToReplace;
-//     } else {
-//       rangeLast -= numDuplicatesToReplace;
-//     }
-
-//     // Replace the required number of duplicates by items from
-//     //   the end of the range.
-//     // The size of the range will shrink as a result.
-
-//     low = rangeFirst + numFound + 1;
-
-//     for (i = 0; i < numDuplicatesToReplace; i++) {
-//       distList[low] = distList[high];
-//       indexList[low] = indexList[high];
-//       low++;
-//       high--;
-//     }
-//   }
-
-//   // Put the pivot element in its proper place.
-
-//   distList[rangeFirst + numFound] = pivotDist;
-//   indexList[rangeFirst + numFound] = pivotIndex;
-
-//   // Finish up by sorting larger-distance items.
-//   // Note that the number of sorted items needed has dropped.
-
-//   return numFound + 1 + partialQuickSort(howMany - numFound - 1, distList,
-//                                          indexList, rangeFirst + numFound +
-//                                          1,
-//                                          rangeLast);
+//   query_result_size_ =
+//       PartialQuickSort(how_many, queryResultDistList, queryResultIndexList,
+//       0,
+//                        query_result_size_ - 1);
+
+//   return query_result_size_;
 // }
 
 // /*!
@@ -1939,11 +1998,11 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 // void RCT::setNewQuery(DistData* query) {
 //   int i;
 //   if (query != this->query) {
-//     for (i = 0; i < numStoredDists; i++) {
-//       distFromQueryList[storedDistIndexList[i]] = RCT_UNKNOWN_;
+//     for (i = 0; i < num_stored_dists_; i++) {
+//       distFromQueryList[storedDistIndexList[i]] = kUnknown;
 //     }
 //     this->query = query;
-//     numStoredDists = 0;
+//     num_stored_dists_ = 0;
 //   }
 // }
 
@@ -1974,14 +2033,14 @@ void _RCT_TEMPLATE_DEFN::AllocateStorage() {
 //     // Check all nodes on level L.
 //     for (int i = 0; i < levelSetSizeList[L]; ++i) {
 //       // Select an item on level L as the parent.
-//       DistData* parent = data[internToExternMapping[i]];
+//       DistData* parent = data_[intern_to_extern_mapping_[i]];
 
 //       // Investigate each child of that parent.
-//       int numChildren = childLSizeLList[L][i];
+//       int num_children = childLSizeLList[L][i];
 //       int* children = childIndexLLList[L][i];
-//       for (int j = 0; j < numChildren; ++j) {
+//       for (int j = 0; j < num_children; ++j) {
 //         // Retrieve the child item.
-//         DistData* child = data[internToExternMapping[children[j]]];
+//         DistData* child = data_[intern_to_extern_mapping_[children[j]]];
 
 //         // Is this a copy of the parent?
 //         if (parent == child) {
